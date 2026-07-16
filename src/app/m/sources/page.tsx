@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
 import { SourcesManager } from "@/components/merchant/sources-manager";
@@ -38,7 +39,10 @@ export default async function SourcesPage() {
     console.error("merchant sources error:", err);
   }
 
-  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+  const h = await headers();
+  const host = h.get("host") || "localhost:3000";
+  const protocol = host.includes("localhost") || host.includes("127.0.0.1") ? "http" : "https";
+  const baseUrl = `${protocol}://${host}`;
 
   return (
     <MerchantShell businessName={biz.name} city={biz.city ?? null}>

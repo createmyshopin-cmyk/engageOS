@@ -1,21 +1,21 @@
 import { NextResponse } from "next/server";
 import { clearMerchantSession } from "@/lib/merchant-session";
 
-async function handleLogout() {
+async function handleLogout(request: Request) {
   await clearMerchantSession();
+  const origin = new URL(request.url).origin;
   return NextResponse.redirect(
-    new URL("/m/login", process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"),
+    new URL("/m/login", origin),
     { status: 303 }
   );
 }
 
 /** POST /m/logout — called by the sidebar <form> submit */
-export async function POST() {
-  return handleLogout();
+export async function POST(request: Request) {
+  return handleLogout(request);
 }
 
 /** GET /m/logout — fallback for direct navigation / bookmarks */
-export async function GET() {
-  return handleLogout();
+export async function GET(request: Request) {
+  return handleLogout(request);
 }
-

@@ -52,7 +52,10 @@ export default async function PrintPage({ params }: PageProps) {
     redirect("/m/login");
   }
 
-  const base = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/$/, "");
+  const h = await headers();
+  const host = h.get("host") || "localhost:3000";
+  const protocol = host.includes("localhost") || host.includes("127.0.0.1") ? "http" : "https";
+  const base = `${protocol}://${host}`;
   const playUrl = `${base}/c/${resolvedBusiness.slug}/${campaign.slug}`;
   const staffUrl = `${base}/redeem?store=${resolvedBusiness.slug}`;
 
@@ -66,7 +69,6 @@ export default async function PrintPage({ params }: PageProps) {
   // QR generation and the poster print/open. Actor is the platform admin or the
   // owning merchant. Best-effort — never blocks rendering the poster.
   {
-    const h = await headers();
     const ua = h.get("user-agent");
     const actorType = admin ? "platform_admin" : "merchant_owner";
     const actorId = admin ? null : session?.merchantId ?? null;
