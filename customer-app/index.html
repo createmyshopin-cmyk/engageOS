@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b0b0f" />
+    <meta name="robots" content="noindex" />
+    <title>EngageOS — Scan. Scratch. Win.</title>
+    <style>
+      /* Instant paint before JS — never a blank white screen */
+      html,
+      body {
+        margin: 0;
+        background: #0b0b0f;
+        color: #fafafa;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #boot span {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: 3px solid rgba(255, 255, 255, 0.15);
+        border-top-color: #fbbf24;
+        animation: bootspin 0.8s linear infinite;
+      }
+      @keyframes bootspin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div id="boot"><span></span></div></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
