@@ -280,7 +280,7 @@ export function SettingsTab({
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
-                Meta Access Token (System User)
+                Meta Access Token (System User or Temporary)
               </span>
               <div className="relative">
                 <KeyRound className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[#9CA3AF]" />
