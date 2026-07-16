@@ -62,12 +62,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     // 3. Ensure a row exists in wacrm accounts table for foreign key constraints
-    await adminClient()
+    const { error: accountError } = await adminClient()
       .from("accounts")
       .upsert(
         { id: repo.businessId, name: phoneInfo.verified_name || phoneInfo.display_phone_number, updated_at: new Date().toISOString() },
         { onConflict: "id" }
       );
+    if (accountError) throw new Error("accounts upsert failed: " + accountError.message);
 
     // 4. Save to wacrm's whatsapp_config
     const { error: wacrmConfError } = await adminClient()
