@@ -28,7 +28,7 @@ export async function getWacrmForBusiness(
   const integration = await getIntegration(businessId);
   if (!integration || integration.status === "disconnected") return null;
   return {
-    client: new WacrmClient(integration.base_url, decryptSecret(integration.api_key_enc)),
+    client: new WacrmClient(integration.base_url, decryptSecret(integration.api_key_enc), businessId),
     integration,
   };
 }
@@ -60,7 +60,7 @@ export async function connectWacrm(
   baseUrl: string,
   apiKey: string
 ): Promise<ConnectResult> {
-  const client = new WacrmClient(baseUrl, apiKey);
+  const client = new WacrmClient(baseUrl, apiKey, businessId);
 
   let me;
   try {
