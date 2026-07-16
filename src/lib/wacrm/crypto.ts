@@ -9,12 +9,18 @@ import crypto from "node:crypto";
  */
 
 function encryptionKey(): Buffer {
-  const hex = process.env.WACRM_ENCRYPTION_KEY;
-  if (!hex || !/^[0-9a-fA-F]{64}$/.test(hex)) {
+  let hex = process.env.WACRM_ENCRYPTION_KEY;
+  if (!hex) {
     throw new Error(
-      "WACRM_ENCRYPTION_KEY must be set to 64 hex chars (32 bytes). " +
+      "WACRM_ENCRYPTION_KEY must be set. " +
         'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
     );
+  }
+  if (hex.length > 64) {
+    hex = hex.slice(0, 64);
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error("WACRM_ENCRYPTION_KEY must be a valid hex string of at least 64 characters.");
   }
   return Buffer.from(hex, "hex");
 }

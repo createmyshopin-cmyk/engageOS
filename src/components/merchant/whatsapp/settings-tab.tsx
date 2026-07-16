@@ -17,10 +17,12 @@ interface StatusPayload {
     couponTemplateLanguage: string;
     autoSendCoupons: boolean;
     lastVerifiedAt: string | null;
+    phoneNumberId?: string;
+    wabaId?: string;
   } | null;
 }
 
-/** Settings tab — connect/disconnect wacrm + coupon-delivery configuration. */
+/** Settings tab — connect/disconnect WhatsApp business API locally + coupon settings. */
 export function SettingsTab({
   onConnectionChange,
 }: {
@@ -30,8 +32,11 @@ export function SettingsTab({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [baseUrl, setBaseUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [phoneNumberId, setPhoneNumberId] = useState("");
+  const [wabaId, setWabaId] = useState("");
+  const [verifyToken, setVerifyToken] = useState("");
+  const [pin, setPin] = useState("");
   const [connecting, setConnecting] = useState(false);
 
   const [templateName, setTemplateName] = useState("");
@@ -71,20 +76,27 @@ export function SettingsTab({
       const json = await fetchAdapter("/api/m/whatsapp/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim() }),
+        body: JSON.stringify({
+          accessToken: accessToken.trim(),
+          phoneNumberId: phoneNumberId.trim(),
+          wabaId: wabaId.trim(),
+          verifyToken: verifyToken.trim(),
+          pin: pin.trim(),
+        }),
       });
       if (!json.ok) {
         setError(json.error ?? "Failed to connect");
       } else {
-        setApiKey("");
+        setAccessToken("");
+        setPin("");
         setNotice(
-          `Connected to “${json.accountName}”.` +
+          `Connected WhatsApp number: “${json.accountName}”.` +
             (json.webhookRegistered
-              ? " Delivery webhook registered."
-              : " Delivery webhook could not be registered (deployment URL must be public https).")
+              ? " Webhook registration request completed."
+              : " Check WhatsApp configuration in Meta developers console.")
         );
         await load();
-        onConnectionChange(true, baseUrl.trim().replace(/\/+$/, ""));
+        onConnectionChange(true, "http://localhost:3000");
       }
     } finally {
       setConnecting(false);
@@ -114,7 +126,7 @@ export function SettingsTab({
   }
 
   async function disconnect() {
-    if (!window.confirm("Disconnect wacrm? Contact sync and coupon delivery will stop.")) return;
+    if (!window.confirm("Disconnect WhatsApp Integration? Active messaging will stop.")) return;
     setDisconnecting(true);
     setError(null);
     try {
@@ -123,7 +135,7 @@ export function SettingsTab({
         setError(json.error ?? "Failed to disconnect");
       } else {
         setStatus((s) => (s ? { ...s, connected: false, integration: null } : s));
-        setNotice("Disconnected from wacrm.");
+        setNotice("Disconnected from WhatsApp.");
         onConnectionChange(false, null);
       }
     } finally {
@@ -132,8 +144,6 @@ export function SettingsTab({
   }
 
   if (!status) {
-    // Surface load failures instead of spinning forever (e.g. migration
-    // 0027 not applied yet, or the status endpoint erroring).
     if (error) {
       return (
         <div className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-5 text-xs font-bold text-[#B91C1C]">
@@ -167,10 +177,10 @@ export function SettingsTab({
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-black text-[#111827]">
-                  {status.integration.accountName ?? "wacrm workspace"}
+                  {status.integration.accountName ?? "WhatsApp Business Line"}
                 </p>
                 <p className="text-[11px] font-medium text-[#6B7280]">
-                  {status.integration.baseUrl} · key ····{status.integration.keyLast4}
+                  Phone ID: {status.integration.phoneNumberId || "Connected"} · WABA ID: {status.integration.wabaId || "Connected"}
                 </p>
               </div>
               <div className="ml-auto flex items-center gap-2">
@@ -200,9 +210,7 @@ export function SettingsTab({
             <div className="mt-4 flex items-center gap-2 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
               <Webhook className="size-4 text-[#6B7280]" />
               <p className="text-[11px] font-medium text-[#374151]">
-                {status.integration.webhookRegistered
-                  ? "Delivery-status webhook is registered — sent/delivered/read/failed stream into your analytics automatically."
-                  : "No delivery webhook registered. Set NEXT_PUBLIC_APP_URL to a public https URL and reconnect to enable live delivery statuses."}
+                Webhook Endpoint is ready. Setup webhook verification token in Meta Console pointing to: <strong>{typeof window !== "undefined" ? `${window.location.origin}/api/webhooks/whatsapp` : ""}</strong>
               </p>
             </div>
           </div>
@@ -211,14 +219,13 @@ export function SettingsTab({
           <form onSubmit={saveCouponSettings} className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
             <h3 className="text-sm font-black text-[#111827]">Coupon Delivery</h3>
             <p className="mt-1 text-[11px] font-medium text-[#6B7280]">
-              When a customer wins, EngageOS can send their coupon through wacrm using a
-              Meta-approved template. Params are filled as: 1 = customer name, 2 = prize name,
-              3 = coupon code.
+              When a customer wins, EngageOS can send their coupon automatically via WhatsApp.
+              Params are filled as: 1 = customer name, 2 = prize name, 3 = coupon code.
             </p>
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
               <label className="block">
                 <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
-                  Template name (from wacrm)
+                  Template name
                 </span>
                 <input
                   value={templateName}
@@ -265,57 +272,84 @@ export function SettingsTab({
         <form onSubmit={connect} className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
           <h3 className="flex items-center gap-2 text-sm font-black text-[#111827]">
             <Plug className="size-4 text-[#16A34A]" />
-            Connect wacrm
+            Configure WhatsApp API
           </h3>
-          <ol className="mt-2 list-decimal space-y-0.5 pl-4 text-[11px] font-medium text-[#6B7280]">
-            <li>In your wacrm workspace open Settings → API keys → New API key.</li>
-            <li>
-              Grant scopes: messages:send, messages:read, contacts:read, contacts:write,
-              conversations:read, broadcasts:send, webhooks:manage.
-            </li>
-            <li>Copy the key (shown once) and paste it below with your wacrm URL.</li>
-          </ol>
+          <p className="mt-1 text-[11px] text-[#6B7280] font-medium">
+            Enter your Meta Cloud API details to link your WhatsApp Business number.
+          </p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
-                wacrm URL
-              </span>
-              <input
-                required
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder="https://crm.yourbrand.com"
-                className={inputCls}
-              />
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
-                API key
+                Meta Access Token (System User)
               </span>
               <div className="relative">
                 <KeyRound className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[#9CA3AF]" />
                 <input
                   required
                   type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="wacrm_live_…"
+                  value={accessToken}
+                  onChange={(e) => setAccessToken(e.target.value)}
+                  placeholder="EAAGz..."
                   className={`${inputCls} pl-9`}
                 />
               </div>
             </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+                Phone Number ID
+              </span>
+              <input
+                required
+                value={phoneNumberId}
+                onChange={(e) => setPhoneNumberId(e.target.value)}
+                placeholder="e.g. 104576392019482"
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+                WhatsApp Business Account ID
+              </span>
+              <input
+                required
+                value={wabaId}
+                onChange={(e) => setWabaId(e.target.value)}
+                placeholder="e.g. 102947264028472"
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+                Webhook Verify Token
+              </span>
+              <input
+                required
+                value={verifyToken}
+                onChange={(e) => setVerifyToken(e.target.value)}
+                placeholder="e.g. engageos_verify_token"
+                className={inputCls}
+              />
+            </label>
+            <label className="block sm:col-span-2">
+              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+                Two-Step Verification PIN (Optional)
+              </span>
+              <input
+                value={pin}
+                onChange={(e) => setPin(e.target.value)}
+                placeholder="6-digit PIN"
+                maxLength={6}
+                className={inputCls}
+              />
+            </label>
           </div>
-          <p className="mt-2 text-[10px] font-medium text-[#9CA3AF]">
-            The key is verified against wacrm, then stored AES-256-GCM encrypted. It is never
-            sent to the browser and only ever used server-side.
-          </p>
           <button
             type="submit"
             disabled={connecting}
-            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#16A34A] px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-green-500/20 hover:bg-[#15803D] disabled:opacity-50 transition-colors"
+            className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#16A34A] px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-green-500/20 hover:bg-[#15803D] disabled:opacity-50 transition-colors"
           >
             {connecting ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
-            Verify & connect
+            Verify & Connect
           </button>
         </form>
       )}

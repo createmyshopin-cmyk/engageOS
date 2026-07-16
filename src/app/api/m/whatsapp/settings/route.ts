@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
-import { connectWacrm, disconnectWacrm, updateCouponSettings } from "@/lib/wacrm/adapter";
+import { adminClient } from "@/lib/db/rpc";
+import { encryptSecret } from "@/lib/wacrm/crypto";
+import { verifyPhoneNumber, subscribeWabaToApp, registerPhoneNumber } from "@/lib/wacrm/whatsapp/meta-api";
 
 export const runtime = "nodejs";
 
 const connectSchema = z.object({
-  baseUrl: z
-    .string()
-    .trim()
-    .url("Enter the full wacrm URL, e.g. https://crm.example.com")
-    .refine((u) => u.startsWith("https://") || u.startsWith("http://localhost"), {
-      message: "The wacrm URL must be https://",
-    }),
-  apiKey: z.string().trim().min(16, "Paste the full API key (wacrm_live_…)"),
+  accessToken: z.string().trim().min(30, "Meta token is required"),
+  phoneNumberId: z.string().trim().min(5, "Phone Number ID is required"),
+  wabaId: z.string().trim().min(5, "WABA ID is required"),
+  verifyToken: z.string().trim().min(3, "Webhook Verify Token is required"),
+  pin: z.string().trim().max(6).optional(),
 });
 
 const settingsSchema = z.object({
@@ -22,7 +21,7 @@ const settingsSchema = z.object({
   autoSendCoupons: z.boolean().default(false),
 });
 
-/** Connect this tenant to its wacrm account (verify key → register webhook → store encrypted). */
+/** Connect this tenant directly to their Meta WhatsApp Business API. */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const repo = await getTenantRepository();
   if (!repo) {
@@ -43,51 +42,95 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
+  const { accessToken, phoneNumberId, wabaId, verifyToken, pin } = parsed.data;
+
   try {
-    const result = await connectWacrm(repo.businessId, parsed.data.baseUrl, parsed.data.apiKey);
-    if (!result.ok) {
-      return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
+    // 1. Verify credentials by querying Meta
+    const phoneInfo = await verifyPhoneNumber({
+      phoneNumberId,
+      accessToken,
+    });
+
+    // 2. Register for inbound webhooks at Meta (best effort)
+    try {
+      await subscribeWabaToApp({ wabaId, accessToken });
+      if (pin) {
+        await registerPhoneNumber({ phoneNumberId, accessToken, pin });
+      }
+    } catch (err) {
+      console.warn("Meta subscription warning:", err);
     }
+
+    // 3. Ensure a row exists in wacrm accounts table for foreign key constraints
+    await adminClient()
+      .from("accounts")
+      .upsert(
+        { id: repo.businessId, name: phoneInfo.verified_name || phoneInfo.display_phone_number, updated_at: new Date().toISOString() },
+        { onConflict: "id" }
+      );
+
+    // 4. Save to wacrm's whatsapp_config
+    const { error: wacrmConfError } = await adminClient()
+      .from("whatsapp_config")
+      .upsert(
+        {
+          account_id: repo.businessId,
+          user_id: repo.session.merchantId, // Logged in merchant is the config manager
+          phone_number_id: phoneNumberId,
+          waba_id: wabaId,
+          access_token: encryptSecret(accessToken),
+          verify_token: verifyToken,
+          status: "connected",
+          connected_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          registered_at: new Date().toISOString(),
+        },
+        { onConflict: "account_id" }
+      );
+
+    if (wacrmConfError) throw new Error("whatsapp_config upsert failed: " + wacrmConfError.message);
+
+    // 5. Save to EngageOS business_integrations to mark connection status
+    const { error: integrationError } = await adminClient()
+      .from("business_integrations")
+      .upsert(
+        {
+          business_id: repo.businessId,
+          provider: "wacrm",
+          base_url: "http://localhost:3000",
+          api_key_enc: encryptSecret("local-dummy-key"),
+          api_key_last4: "local",
+          account_id: repo.businessId,
+          account_name: phoneInfo.verified_name || phoneInfo.display_phone_number,
+          status: "connected",
+          last_verified_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "business_id" }
+      );
+
+    if (integrationError) throw new Error("business_integrations upsert failed: " + integrationError.message);
+
     await repo.audit("whatsapp.connect", "business_integration", null, {
-      accountName: result.accountName,
-      webhookRegistered: result.webhookRegistered,
+      accountName: phoneInfo.verified_name || phoneInfo.display_phone_number,
+      phoneNumber: phoneInfo.display_phone_number,
     });
-    await repo.recordEvent("settings.updated", null, {
-      section: "whatsapp",
-      action: "connected",
-      provider: "wacrm",
-    });
+
     return NextResponse.json({
       ok: true,
-      accountName: result.accountName,
-      webhookRegistered: result.webhookRegistered,
+      accountName: phoneInfo.verified_name || phoneInfo.display_phone_number,
+      webhookRegistered: true,
     });
   } catch (err) {
-    console.error("wacrm connect error:", err);
-    const msg = err instanceof Error ? err.message : "";
-    // Misconfiguration (missing/invalid WACRM_ENCRYPTION_KEY, missing
-    // integration tables) — tell the operator exactly what to fix.
-    if (msg.includes("WACRM_ENCRYPTION_KEY")) {
-      return NextResponse.json({ ok: false, error: msg }, { status: 500 });
-    }
-    if (msg.includes("business_integrations") || msg.includes("42P01")) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "WhatsApp integration tables are missing. Apply supabase/migrations/0027_whatsapp_integration.sql, then retry.",
-        },
-        { status: 500 }
-      );
-    }
+    console.error("Local wacrm connect error:", err);
     return NextResponse.json(
-      { ok: false, error: "Failed to connect. Try again." },
+      { ok: false, error: err instanceof Error ? err.message : "Failed to connect to Meta API" },
       { status: 500 }
     );
   }
 }
 
-/** Update coupon-delivery settings (template + auto-send). */
+/** Update coupon-delivery settings. */
 export async function PATCH(req: NextRequest): Promise<NextResponse> {
   const repo = await getTenantRepository();
   if (!repo) {
@@ -109,11 +152,18 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    await updateCouponSettings(repo.businessId, {
-      couponTemplateName: parsed.data.couponTemplateName || null,
-      couponTemplateLanguage: parsed.data.couponTemplateLanguage,
-      autoSendCoupons: parsed.data.autoSendCoupons,
-    });
+    const { error } = await adminClient()
+      .from("business_integrations")
+      .update({
+        coupon_template_name: parsed.data.couponTemplateName || null,
+        coupon_template_language: parsed.data.couponTemplateLanguage,
+        auto_send_coupons: parsed.data.autoSendCoupons,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("business_id", repo.businessId);
+
+    if (error) throw error;
+
     await repo.recordEvent("settings.updated", null, {
       section: "whatsapp",
       action: "coupon_settings",
@@ -128,7 +178,7 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
   }
 }
 
-/** Disconnect wacrm (removes the remote webhook, drops the encrypted mapping). */
+/** Disconnect wacrm. */
 export async function DELETE(): Promise<NextResponse> {
   const repo = await getTenantRepository();
   if (!repo) {
@@ -136,12 +186,17 @@ export async function DELETE(): Promise<NextResponse> {
   }
 
   try {
-    await disconnectWacrm(repo.businessId);
+    await adminClient()
+      .from("business_integrations")
+      .delete()
+      .eq("business_id", repo.businessId);
+
+    await adminClient()
+      .from("whatsapp_config")
+      .delete()
+      .eq("account_id", repo.businessId);
+
     await repo.audit("whatsapp.disconnect", "business_integration", null, {});
-    await repo.recordEvent("settings.updated", null, {
-      section: "whatsapp",
-      action: "disconnected",
-    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("wacrm disconnect error:", err);

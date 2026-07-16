@@ -1,5 +1,4 @@
-import "server-only";
-import { adminClient, recordCampaignEvent } from "@/lib/db/rpc";
+import { adminClient, adminClient as supabaseAdmin, recordCampaignEvent } from "@/lib/db/rpc";
 import { WacrmApiError } from "@/lib/wacrm/client";
 import { flagIntegrationError, getWacrmForBusiness, type TenantWacrm } from "@/lib/wacrm/adapter";
 import { recordMessageMap, setCustomerContactId } from "@/lib/wacrm/store";
@@ -85,7 +84,7 @@ async function upsertContactWithTags(
 }
 
 async function loadBusinessBySlug(slug: string): Promise<BusinessRow | null> {
-  const { data } = await adminClient()
+  const { data } = await supabaseAdmin()
     .from("businesses")
     .select("id, name, wa_messages_sent, wa_messages_quota")
     .eq("slug", slug)
@@ -97,7 +96,7 @@ async function loadCustomerByPhone(
   businessId: string,
   phone: string
 ): Promise<CustomerRow | null> {
-  const { data } = await adminClient()
+  const { data } = await supabaseAdmin()
     .from("customers")
     .select("id, phone, name, wacrm_contact_id, wa_opt_out")
     .eq("business_id", businessId)
@@ -131,7 +130,7 @@ export async function syncPlayToWacrm(params: {
     const tenant = await getWacrmForBusiness(business.id);
     if (!tenant) return; // merchant has not connected wacrm
 
-    const { data: campaign } = await adminClient()
+    const { data: campaign } = await supabaseAdmin()
       .from("campaigns")
       .select("id, name, slug")
       .eq("business_id", business.id)
@@ -197,7 +196,7 @@ async function deliverCoupon(args: {
   if (!args.force && !integration.auto_send_coupons) return "skipped";
   if (args.customer?.wa_opt_out) return "skipped";
 
-  const { data: coupon } = await adminClient()
+  const { data: coupon } = await supabaseAdmin()
     .from("coupons")
     .select("id, wa_attempts")
     .eq("business_id", business.id)
@@ -246,13 +245,13 @@ async function deliverCoupon(args: {
     });
 
     if (coupon) {
-      await adminClient()
+      await supabaseAdmin()
         .from("coupons")
         .update({ wa_status: "sent", wa_attempts: coupon.wa_attempts + 1 })
         .eq("business_id", business.id)
         .eq("id", coupon.id);
     }
-    await adminClient().rpc("increment_wa_sent", {
+    await supabaseAdmin().rpc("increment_wa_sent", {
       p_business_id: business.id,
       p_count: 1,
     });
@@ -270,7 +269,7 @@ async function deliverCoupon(args: {
   } catch (err) {
     console.error("wacrm coupon send failed:", err);
     if (coupon) {
-      await adminClient()
+      await supabaseAdmin()
         .from("coupons")
         .update({ wa_status: "failed", wa_attempts: coupon.wa_attempts + 1 })
         .eq("business_id", business.id)
@@ -297,7 +296,7 @@ export async function dispatchPendingCoupons(
   businessId: string,
   limit = 50
 ): Promise<{ sent: number; failed: number; skipped: number; error?: string }> {
-  const db = adminClient();
+  const db = supabaseAdmin();
   const { data: business } = await db
     .from("businesses")
     .select("id, name, wa_messages_sent, wa_messages_quota")
@@ -361,7 +360,7 @@ export async function syncRedeemToWacrm(params: {
     const tenant = await getWacrmForBusiness(params.businessId);
     if (!tenant) return;
 
-    const { data: coupon } = await adminClient()
+    const { data: coupon } = await supabaseAdmin()
       .from("coupons")
       .select("customer_id")
       .eq("business_id", params.businessId)
@@ -369,7 +368,7 @@ export async function syncRedeemToWacrm(params: {
       .maybeSingle<{ customer_id: string }>();
     if (!coupon) return;
 
-    const { data: customer } = await adminClient()
+    const { data: customer } = await supabaseAdmin()
       .from("customers")
       .select("id, phone, name, wacrm_contact_id, wa_opt_out")
       .eq("business_id", params.businessId)
@@ -403,7 +402,7 @@ export async function syncOptOut(
   const customer = await loadCustomerByPhone(businessId, phone);
   if (!customer) return { ok: false, error: "No customer with that phone" };
 
-  await adminClient()
+  await supabaseAdmin()
     .from("customers")
     .update({ wa_opt_out: optOut })
     .eq("business_id", businessId)
@@ -445,7 +444,7 @@ export async function resolveSegmentRecipients(
   businessId: string,
   segment: BroadcastSegment
 ): Promise<SegmentRecipient[]> {
-  const db = adminClient();
+  const db = supabaseAdmin();
 
   if (segment === "winners" || segment === "redeemed") {
     let q = db

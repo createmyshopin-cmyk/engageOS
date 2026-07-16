@@ -1,5 +1,4 @@
-import "server-only";
-import { adminClient } from "@/lib/db/rpc";
+import { adminClient as supabaseAdmin } from "@/lib/db/rpc";
 import type { WacrmIntegration } from "@/lib/wacrm/types";
 
 /**
@@ -12,7 +11,7 @@ import type { WacrmIntegration } from "@/lib/wacrm/types";
 export async function getIntegration(
   businessId: string
 ): Promise<WacrmIntegration | null> {
-  const { data, error } = await adminClient()
+  const { data, error } = await supabaseAdmin()
     .from("business_integrations")
     .select("*")
     .eq("business_id", businessId)
@@ -24,7 +23,7 @@ export async function getIntegration(
 export async function findIntegrationByAccountId(
   accountId: string
 ): Promise<WacrmIntegration | null> {
-  const { data, error } = await adminClient()
+  const { data, error } = await supabaseAdmin()
     .from("business_integrations")
     .select("*")
     .eq("account_id", accountId)
@@ -38,7 +37,7 @@ export async function upsertIntegration(
   businessId: string,
   row: Partial<WacrmIntegration>
 ): Promise<void> {
-  const { error } = await adminClient()
+  const { error } = await supabaseAdmin()
     .from("business_integrations")
     .upsert(
       { ...row, business_id: businessId, updated_at: new Date().toISOString() },
@@ -51,7 +50,7 @@ export async function patchIntegration(
   businessId: string,
   patch: Partial<WacrmIntegration>
 ): Promise<void> {
-  const { error } = await adminClient()
+  const { error } = await supabaseAdmin()
     .from("business_integrations")
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq("business_id", businessId);
@@ -59,7 +58,7 @@ export async function patchIntegration(
 }
 
 export async function deleteIntegration(businessId: string): Promise<void> {
-  const { error } = await adminClient()
+  const { error } = await supabaseAdmin()
     .from("business_integrations")
     .delete()
     .eq("business_id", businessId);
@@ -78,7 +77,7 @@ export async function recordMessageMap(row: {
   coupon_id?: string | null;
   purpose: "coupon_delivery" | "inbox_reply" | "other";
 }): Promise<void> {
-  const { error } = await adminClient()
+  const { error } = await supabaseAdmin()
     .from("wa_message_map")
     .upsert(row, { onConflict: "whatsapp_message_id", ignoreDuplicates: true });
   if (error) throw new Error(`recordMessageMap failed: ${error.message}`);
@@ -99,7 +98,7 @@ export async function findMessageByWamid(
   businessId: string,
   wamid: string
 ): Promise<MessageMapRow | null> {
-  const { data, error } = await adminClient()
+  const { data, error } = await supabaseAdmin()
     .from("wa_message_map")
     .select("id, business_id, whatsapp_message_id, campaign_id, customer_id, coupon_id, purpose, status")
     .eq("business_id", businessId)
@@ -114,7 +113,7 @@ export async function updateMessageStatus(
   wamid: string,
   status: "sent" | "delivered" | "read" | "failed"
 ): Promise<void> {
-  const { error } = await adminClient()
+  const { error } = await supabaseAdmin()
     .from("wa_message_map")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("business_id", businessId)
@@ -148,7 +147,7 @@ export async function insertBroadcast(
     created_by: string | null;
   }
 ): Promise<void> {
-  const { error } = await adminClient().from("whatsapp_broadcasts").insert(row);
+  const { error } = await supabaseAdmin().from("whatsapp_broadcasts").insert(row);
   if (error) throw new Error(`insertBroadcast failed: ${error.message}`);
 }
 
@@ -156,7 +155,7 @@ export async function listBroadcasts(
   businessId: string,
   limit = 25
 ): Promise<BroadcastRow[]> {
-  const { data, error } = await adminClient()
+  const { data, error } = await supabaseAdmin()
     .from("whatsapp_broadcasts")
     .select("*")
     .eq("business_id", businessId)
@@ -171,7 +170,7 @@ export async function updateBroadcastCounts(
   id: string,
   patch: Partial<Pick<BroadcastRow, "status" | "sent_count" | "delivered_count" | "read_count" | "failed_count">>
 ): Promise<void> {
-  const { error } = await adminClient()
+  const { error } = await supabaseAdmin()
     .from("whatsapp_broadcasts")
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq("business_id", businessId)
@@ -187,7 +186,7 @@ export async function claimWebhookDelivery(
   businessId: string | null,
   event: string
 ): Promise<boolean> {
-  const { error, count } = await adminClient()
+  const { error, count } = await supabaseAdmin()
     .from("wacrm_webhook_deliveries")
     .upsert(
       { id: deliveryId, business_id: businessId, event },
@@ -204,7 +203,7 @@ export async function setCustomerContactId(
   customerId: string,
   wacrmContactId: string
 ): Promise<void> {
-  const { error } = await adminClient()
+  const { error } = await supabaseAdmin()
     .from("customers")
     .update({ wacrm_contact_id: wacrmContactId })
     .eq("business_id", businessId)
