@@ -110,7 +110,7 @@ export function WatiSettings() {
       if (json.ok) {
         // Only approved templates can be sent — hide pending/rejected drafts.
         const approved = ((json.templates as WatiTemplate[]) ?? []).filter(
-          (t) => t.status === "APPROVED"
+          (t) => t.status?.toUpperCase() === "APPROVED"
         );
         setTemplates(approved);
       }
@@ -449,13 +449,28 @@ export function WatiSettings() {
                 <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
                   Template name
                 </span>
-                <input
-                  required
-                  value={testTemplate}
-                  onChange={(e) => setTestTemplate(e.target.value)}
-                  placeholder="hello_world"
-                  className={inputCls}
-                />
+                {templates && templates.length > 0 ? (
+                  <select
+                    value={testTemplate}
+                    onChange={(e) => setTestTemplate(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="">— select —</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.name}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    required
+                    value={testTemplate}
+                    onChange={(e) => setTestTemplate(e.target.value)}
+                    placeholder="hello_world"
+                    className={inputCls}
+                  />
+                )}
               </label>
             </div>
             <button
