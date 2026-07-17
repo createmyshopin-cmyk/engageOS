@@ -21,11 +21,18 @@ import {
   LogOut,
   AlertTriangle,
   Blocks,
+  Send,
 } from "lucide-react";
 
 import { usePathname } from "next/navigation";
 
-const NAV_ITEMS = [
+interface NavItem {
+  icon: typeof LayoutDashboard;
+  label: string;
+  href: string;
+}
+
+const NAV_ITEMS: NavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/m/dashboard" },
   { icon: Megaphone, label: "Campaigns", href: "/m/campaigns" },
   { icon: Trophy, label: "Winners", href: "/m/winners" },
@@ -38,6 +45,9 @@ const NAV_ITEMS = [
   { icon: Settings, label: "Settings", href: "#" },
   { icon: HelpCircle, label: "Help & Support", href: "#" },
 ];
+
+/** The WATI console item is injected right after WhatsApp once WATI is connected. */
+const WATI_NAV_ITEM: NavItem = { icon: Send, label: "WATI", href: "/m/wati" };
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -95,8 +105,37 @@ export function MerchantShell({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
+  const [watiConnected, setWatiConnected] = useState(false);
   const pathname = usePathname();
   const avatarRef = useRef<HTMLDivElement>(null);
+
+  // Reveal the WATI console item only once the tenant has a *successfully*
+  // connected WATI gateway (status "connected" — not "error"/"disconnected").
+  // Best-effort: a failed/401 fetch simply leaves the item hidden (WATI is
+  // still reachable via Integrations). Kept client-side so no page has to
+  // thread the flag through.
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/m/integrations/wati", { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (alive && json?.ok) {
+          setWatiConnected(json.integration?.status === "connected");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const navItems = watiConnected
+    ? [
+        ...NAV_ITEMS.slice(0, 7), // through WhatsApp
+        WATI_NAV_ITEM,
+        ...NAV_ITEMS.slice(7),
+      ]
+    : NAV_ITEMS;
 
   // Close avatar dropdown when clicking outside
   useEffect(() => {
@@ -160,7 +199,7 @@ export function MerchantShell({
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {NAV_ITEMS.map(({ icon: Icon, label, href }) => {
+          {navItems.map(({ icon: Icon, label, href }) => {
             const active = href !== "#" && pathname.startsWith(href);
             return (
               <Link

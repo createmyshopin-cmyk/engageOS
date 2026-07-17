@@ -31,6 +31,9 @@ interface Integration {
   couponTemplateName: string | null;
   couponTemplateLanguage: string;
   autoSendCoupons: boolean;
+  participationTemplateName: string | null;
+  participationTemplateLanguage: string;
+  autoSendParticipation: boolean;
   lastVerifiedAt: string | null;
 }
 
@@ -84,9 +87,9 @@ export function WatiSettings() {
         setTemplateName(integ.couponTemplateName ?? "");
         setTemplateLanguage(integ.couponTemplateLanguage ?? "en");
         setAutoSend(!!integ.autoSendCoupons);
-        setParticipationTemplateName((integ as any).participationTemplateName ?? "");
-        setParticipationTemplateLanguage((integ as any).participationTemplateLanguage ?? "en");
-        setAutoSendParticipation(!!(integ as any).autoSendParticipation);
+        setParticipationTemplateName(integ.participationTemplateName ?? "");
+        setParticipationTemplateLanguage(integ.participationTemplateLanguage ?? "en");
+        setAutoSendParticipation(!!integ.autoSendParticipation);
         setTestTemplate(integ.couponTemplateName ?? "");
       }
     } catch (err) {
@@ -104,7 +107,13 @@ export function WatiSettings() {
   const loadTemplates = useCallback(async () => {
     try {
       const json = await fetchWati(`${ENDPOINT}/templates`);
-      if (json.ok) setTemplates((json.templates as WatiTemplate[]) ?? []);
+      if (json.ok) {
+        // Only approved templates can be sent — hide pending/rejected drafts.
+        const approved = ((json.templates as WatiTemplate[]) ?? []).filter(
+          (t) => t.status === "APPROVED"
+        );
+        setTemplates(approved);
+      }
     } catch {
       /* non-fatal — the picker just stays a free-text field */
     }
@@ -300,7 +309,8 @@ export function WatiSettings() {
                       <option value="">— none —</option>
                       {templates.map((t) => (
                         <option key={t.id} value={t.name}>
-                          {t.name} {t.status !== "APPROVED" ? `(${t.status})` : ""}
+                          {t.name}
+                          {t.category ? ` · ${t.category}` : ""}
                         </option>
                       ))}
                     </select>
@@ -362,7 +372,8 @@ export function WatiSettings() {
                       <option value="">— none —</option>
                       {templates.map((t) => (
                         <option key={t.id} value={t.name}>
-                          {t.name} {t.status !== "APPROVED" ? `(${t.status})` : ""}
+                          {t.name}
+                          {t.category ? ` · ${t.category}` : ""}
                         </option>
                       ))}
                     </select>

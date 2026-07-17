@@ -51,6 +51,20 @@ export interface WatiSendResponse {
   recipients?: WatiSendRecipientResult[] | null;
 }
 
+/**
+ * GET /api/ext/v3/broadcasts/overview → account-wide campaign totals.
+ * WATI's field names vary a little across accounts, so every field is
+ * optional and normalised by the client.
+ */
+export interface WatiBroadcastOverview {
+  total?: number | null;
+  sent?: number | null;
+  delivered?: number | null;
+  read?: number | null;
+  failed?: number | null;
+  [key: string]: unknown;
+}
+
 /** Row shape of wati_integrations (token stays encrypted). */
 export interface WatiIntegration {
   id: string;

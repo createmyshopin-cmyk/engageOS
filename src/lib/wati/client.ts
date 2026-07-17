@@ -1,5 +1,6 @@
 import "server-only";
 import type {
+  WatiBroadcastOverview,
   WatiChannel,
   WatiChannelsResponse,
   WatiCustomParam,
@@ -106,6 +107,21 @@ export class WatiClient {
       `/messagetemplates?page_number=${pageNumber}&page_size=${pageSize}`
     );
     return data.templates ?? [];
+  }
+
+  /**
+   * GET /broadcasts/overview — account-wide campaign totals for the Analytics
+   * tab. Best-effort: WATI only exposes account-level aggregates here (not
+   * per-EngageOS-campaign), so this supplements our own campaign_events funnel
+   * rather than replacing it. Returns null on any error so analytics still
+   * render from our own log.
+   */
+  async getBroadcastOverview(): Promise<WatiBroadcastOverview | null> {
+    try {
+      return await this.request<WatiBroadcastOverview>("GET", `/broadcasts/overview`);
+    } catch {
+      return null;
+    }
   }
 
   /**

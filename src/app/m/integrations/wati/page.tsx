@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
 import { WatiSettings } from "@/components/merchant/wati/wati-settings";
-import { ArrowLeft, Zap } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -37,12 +37,15 @@ export default async function WatiIntegrationPage() {
           Back to Integrations
         </Link>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center size-10 rounded-2xl bg-[#EFF6FF]">
-            <Zap className="size-5 text-[#3B82F6]" />
-          </div>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element -- external brand asset from WATI CDN */}
+          <img
+            src="https://assets.wati.io/cdn-cgi/image/f=auto/images/WATI_logo_full.png"
+            alt="WATI"
+            className="h-7 w-auto shrink-0"
+          />
           <div>
-            <h1 className="text-lg font-black text-[#111827]">WATI WhatsApp</h1>
+            <h1 className="text-lg font-black text-[#111827]">WhatsApp Gateway</h1>
             <p className="text-xs text-[#6B7280] font-medium">
               Connect your official WATI WhatsApp business gateway (API v3) to send
               approved template messages from EngageOS.
