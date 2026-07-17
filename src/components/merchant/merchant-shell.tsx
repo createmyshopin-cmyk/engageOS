@@ -20,6 +20,7 @@ import {
   Bell,
   LogOut,
   AlertTriangle,
+  Blocks,
 } from "lucide-react";
 
 import { usePathname } from "next/navigation";
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   { icon: Radio, label: "Sources", href: "/m/sources" },
   { icon: Users, label: "Customers", href: "#" },
   { icon: MessageSquare, label: "WhatsApp", href: "/m/whatsapp" },
+  { icon: Blocks, label: "Integrations", href: "/m/integrations" },
   { icon: BarChart3, label: "Reports", href: "#" },
   { icon: Settings, label: "Settings", href: "#" },
   { icon: HelpCircle, label: "Help & Support", href: "#" },
