@@ -34,16 +34,12 @@ function mapTemplateParams(
   bodyOriginal: string,
   context: {
     customerName: string;
-    firstName: string;
-    lastName: string;
     phone: string;
     merchantName: string;
-    businessPhone: string;
-    city: string;
+    campaignName: string;
     prizeName: string;
     couponCode: string;
     endDate: string;
-    playUrl: string;
   }
 ): { name: string; value: string }[] {
   const regex = /\{\{([^}]+)\}\}/g;
@@ -83,38 +79,29 @@ function mapTemplateParams(
     }));
   }
 
-  // Otherwise, match by variable name (case-insensitive, strip symbols)
+  // Otherwise, match by WATI Contact variables (case-insensitive, strip symbols)
   return matches.map((m) => {
     const key = m.toLowerCase().replace(/[^a-z0-9]/g, "");
     let value = "";
     
-    if (key === "firstname") {
-      value = context.firstName;
-    } else if (key === "lastname") {
-      value = context.lastName;
-    } else if (key.includes("customer") || key === "name") {
+    if (key === "name" || key === "bsuidusername" || key === "externalname" || key === "customername") {
       value = context.customerName;
-    } else if (key === "phone" || key === "customerphone") {
+    } else if (key === "phone" || key === "bsuid") {
       value = context.phone;
-    } else if (key.includes("merchant") || key.includes("business") || key.includes("team") || key === "shopname") {
-      value = context.merchantName;
-    } else if (key.includes("whatsapp") || key === "shopnumber") {
-      // Check if it's a URL or number
-      if (key.includes("url")) {
-        value = context.playUrl;
-      } else {
-        value = context.businessPhone;
-      }
-    } else if (key.includes("url") || key.includes("link") || key.includes("checkout") || key.includes("tracking")) {
-      value = context.playUrl;
-    } else if (key.includes("gift") || key.includes("prize") || key.includes("reward") || key === "productdetails" || key.includes("cartitems")) {
+    } else if (key === "channel") {
+      value = "WhatsApp";
+    } else if (key === "source") {
+      value = context.campaignName;
+    } else if (key === "lastcartitems" || key === "lastcartitemstext" || key === "giftname" || key === "prizename" || key === "reward") {
       value = context.prizeName;
-    } else if (key.includes("coupon") || key.includes("code") || key === "discountcode") {
+    } else if (key === "lastcarttotalvalue" || key === "lastcarttotalvaluetext" || key === "lastcarttotalvaluetextamount" || key === "couponcode" || key === "code" || key === "externalid") {
       value = context.couponCode;
+    } else if (key.includes("merchant") || key.includes("business") || key.includes("team")) {
+      value = context.merchantName;
     } else if (key.includes("date") || key.includes("until") || key.includes("expiry") || key.includes("valid")) {
       value = context.endDate;
-    } else if (key === "city") {
-      value = context.city;
+    } else if (key === "leadstage") {
+      value = "Played";
     } else {
       value = "";
     }
@@ -180,7 +167,7 @@ export async function syncPlayToWati(params: {
         tenant,
         business,
         campaignId: campaign?.id ?? null,
-        campaignSlug: campaign?.slug ?? null,
+        campaignName: campaign?.name ?? "Scratch & Win",
         campaignEndsAt: campaign?.ends_at ?? null,
         customer,
         phone: params.phone,
@@ -195,7 +182,7 @@ export async function syncPlayToWati(params: {
         tenant,
         business,
         campaignId: campaign?.id ?? null,
-        campaignSlug: campaign?.slug ?? null,
+        campaignName: campaign?.name ?? "Scratch & Win",
         campaignEndsAt: campaign?.ends_at ?? null,
         customer,
         phone: params.phone,
@@ -212,7 +199,7 @@ async function deliverWatiCoupon(args: {
   tenant: TenantWati;
   business: BusinessRow;
   campaignId: string | null;
-  campaignSlug: string | null;
+  campaignName: string;
   campaignEndsAt: string | null;
   customer: CustomerRow | null;
   phone: string;
@@ -260,11 +247,6 @@ async function deliverWatiCoupon(args: {
   const expiresAt = coupon?.expires_at || args.campaignEndsAt || new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString();
   const endDate = formatDate(expiresAt);
 
-  const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://engageos.com";
-  const playUrl = args.campaignSlug
-    ? `${appBaseUrl}/c/${business.slug}/${args.campaignSlug}`
-    : `${appBaseUrl}`;
-
   // Map custom params based on the template's variable list (fetched from WATI)
   let customParams = [
     { name: "1", value: args.customerName },
@@ -280,16 +262,12 @@ async function deliverWatiCoupon(args: {
       if (bodyOriginal) {
         customParams = mapTemplateParams(bodyOriginal, {
           customerName: args.customerName,
-          firstName: args.customerName.split(" ")[0] || args.customerName,
-          lastName: args.customerName.split(" ").slice(1).join(" ") || "",
           phone: args.phone,
           merchantName: business.name,
-          businessPhone: business.phone,
-          city: business.city || "",
+          campaignName: args.campaignName,
           prizeName: args.prizeName,
           couponCode: args.couponCode,
           endDate,
-          playUrl,
         });
       }
     }
@@ -362,7 +340,7 @@ async function deliverWatiParticipation(args: {
   tenant: TenantWati;
   business: BusinessRow;
   campaignId: string | null;
-  campaignSlug: string | null;
+  campaignName: string;
   campaignEndsAt: string | null;
   customer: CustomerRow | null;
   phone: string;
@@ -400,11 +378,6 @@ async function deliverWatiParticipation(args: {
 
   const endDate = args.campaignEndsAt ? formatDate(args.campaignEndsAt) : "N/A";
 
-  const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://engageos.com";
-  const playUrl = args.campaignSlug
-    ? `${appBaseUrl}/c/${business.slug}/${args.campaignSlug}`
-    : `${appBaseUrl}`;
-
   // Map custom params based on the template's variable list
   let customParams = [
     { name: "1", value: args.customerName },
@@ -420,16 +393,12 @@ async function deliverWatiParticipation(args: {
       if (bodyOriginal) {
         customParams = mapTemplateParams(bodyOriginal, {
           customerName: args.customerName,
-          firstName: args.customerName.split(" ")[0] || args.customerName,
-          lastName: args.customerName.split(" ").slice(1).join(" ") || "",
           phone: args.phone,
           merchantName: business.name,
-          businessPhone: business.phone,
-          city: business.city || "",
+          campaignName: args.campaignName,
           prizeName: "Better luck next time!",
           couponCode: "N/A",
           endDate,
-          playUrl,
         });
       }
     }
