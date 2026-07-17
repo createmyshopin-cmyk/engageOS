@@ -52,6 +52,7 @@ export function WatiSettings() {
   const [integration, setIntegration] = useState<Integration | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
 
   // Connect form
   const [baseUrl, setBaseUrl] = useState("");
@@ -83,6 +84,7 @@ export function WatiSettings() {
       if (!json.ok) throw new Error((json.error as string) ?? "Failed to load");
       const integ = (json.integration as Integration | null) ?? null;
       setIntegration(integ);
+      setWebhookUrl((json.webhookUrl as string) ?? null);
       if (integ) {
         setTemplateName(integ.couponTemplateName ?? "");
         setTemplateLanguage(integ.couponTemplateLanguage ?? "en");
@@ -284,6 +286,36 @@ export function WatiSettings() {
               </p>
             )}
           </div>
+
+          {/* Webhook Configuration */}
+          {webhookUrl && (
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] p-5 space-y-3">
+              <div>
+                <h3 className="text-sm font-black text-[#111827]">Webhook Configuration</h3>
+                <p className="mt-1 text-[11px] font-medium text-[#6B7280]">
+                  Paste this URL into your WATI Dashboard (Webhooks section) to sync message delivery statuses back to EngageOS.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={webhookUrl}
+                  className="w-full rounded-xl border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-medium text-[#4B5563] focus:outline-none"
+                  onClick={(e) => e.currentTarget.select()}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(webhookUrl);
+                    setNotice("Webhook URL copied to clipboard!");
+                  }}
+                  className="shrink-0 rounded-xl bg-white border border-[#E5E7EB] px-3 py-2 text-[11px] font-bold text-[#3B82F6] hover:bg-[#EFF6FF] transition-colors"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* WATI templates settings */}
           <form onSubmit={saveCouponSettings} className="rounded-2xl border border-[#E5E7EB] bg-white p-5 space-y-6">
