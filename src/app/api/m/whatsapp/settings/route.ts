@@ -80,7 +80,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           phone_number_id: phoneNumberId,
           waba_id: wabaId,
           access_token: encryptSecret(accessToken),
-          verify_token: verifyToken,
+          verify_token: encryptSecret(verifyToken),
           status: "connected",
           connected_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

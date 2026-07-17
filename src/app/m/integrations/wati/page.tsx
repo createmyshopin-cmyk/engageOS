@@ -1,0 +1,57 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { MerchantShell } from "@/components/merchant/merchant-shell";
+import { WatiSettings } from "@/components/merchant/wati/wati-settings";
+import { ArrowLeft, Zap } from "lucide-react";
+
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "WATI WhatsApp — EngageOS",
+  robots: { index: false, follow: false },
+};
+
+/**
+ * WATI WhatsApp integration settings. WATI is an official WhatsApp Business
+ * gateway (API v3). The browser never talks to WATI directly — every call
+ * goes through the /api/m/integrations/wati adapter, which holds the
+ * encrypted token server-side.
+ */
+export default async function WatiIntegrationPage() {
+  const repo = await getTenantRepository();
+  if (!repo) redirect("/m/login?from=/m/integrations/wati");
+
+  const biz = await repo.getBusiness<{ name: string; city: string | null }>("name, city");
+  if (!biz) redirect("/m/login?from=/m/integrations/wati");
+
+  return (
+    <MerchantShell businessName={biz.name} city={biz.city} hideHeader>
+      <div className="space-y-6">
+        <Link
+          href="/m/integrations"
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-[#6B7280] hover:text-[#111827] transition-colors"
+        >
+          <ArrowLeft className="size-3.5" />
+          Back to Integrations
+        </Link>
+
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center size-10 rounded-2xl bg-[#EFF6FF]">
+            <Zap className="size-5 text-[#3B82F6]" />
+          </div>
+          <div>
+            <h1 className="text-lg font-black text-[#111827]">WATI WhatsApp</h1>
+            <p className="text-xs text-[#6B7280] font-medium">
+              Connect your official WATI WhatsApp business gateway (API v3) to send
+              approved template messages from EngageOS.
+            </p>
+          </div>
+        </div>
+
+        <WatiSettings />
+      </div>
+    </MerchantShell>
+  );
+}

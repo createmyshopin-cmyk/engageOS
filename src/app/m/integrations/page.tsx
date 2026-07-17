@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { getIntegration } from "@/lib/wacrm/store";
+import { getWatiIntegration } from "@/lib/wati/store";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
 import { 
   Blocks, 
@@ -45,6 +46,19 @@ export default async function IntegrationsPage() {
     console.error("Failed to load integrations status:", err);
   }
 
+  // Query actual WATI status
+  let watiConnected = false;
+  let watiAccountName: string | null = null;
+  try {
+    const wati = await getWatiIntegration(repo.businessId);
+    if (wati && wati.status !== "disconnected") {
+      watiConnected = true;
+      watiAccountName = wati.display_name ?? wati.channel_name ?? "WATI WhatsApp";
+    }
+  } catch (err) {
+    console.error("Failed to load WATI status:", err);
+  }
+
   const integrationsList = [
     {
       id: "wacrm",
@@ -56,17 +70,19 @@ export default async function IntegrationsPage() {
       status: wacrmConnected ? "connected" : "disconnected",
       href: "/m/whatsapp",
       badgeLabel: wacrmConnected ? "Connected" : "Available",
+      accountName: wacrmAccountName,
     },
     {
       id: "wati",
       name: "WATI WhatsApp",
-      description: "Connect your official WATI WhatsApp business gateway for automated scratch card distributions.",
+      description: "Connect your official WATI WhatsApp business gateway (API v3) for automated scratch card and coupon distributions.",
       icon: Zap,
       iconBg: "bg-[#EFF6FF]",
       iconColor: "text-[#3B82F6]",
-      status: "coming_soon",
-      href: "#",
-      badgeLabel: "Coming Soon",
+      status: watiConnected ? "connected" : "disconnected",
+      href: "/m/integrations/wati",
+      badgeLabel: watiConnected ? "Connected" : "Available",
+      accountName: watiAccountName,
     },
     {
       id: "twilio",
@@ -78,6 +94,7 @@ export default async function IntegrationsPage() {
       status: "coming_soon",
       href: "#",
       badgeLabel: "Coming Soon",
+      accountName: null,
     },
     {
       id: "mailchimp",
@@ -89,6 +106,7 @@ export default async function IntegrationsPage() {
       status: "coming_soon",
       href: "#",
       badgeLabel: "Coming Soon",
+      accountName: null,
     },
     {
       id: "webhooks",
@@ -100,6 +118,7 @@ export default async function IntegrationsPage() {
       status: "coming_soon",
       href: "#",
       badgeLabel: "Enterprise Only",
+      accountName: null,
     }
   ];
 
@@ -156,11 +175,11 @@ export default async function IntegrationsPage() {
                     {item.description}
                   </p>
 
-                  {isConnected && wacrmAccountName && (
+                  {isConnected && item.accountName && (
                     <div className="mt-3 flex items-center gap-1.5 rounded-xl bg-neutral-50 border border-neutral-100 px-3 py-2">
                       <ShieldCheck className="size-4 text-[#16A34A]" />
                       <span className="text-[10px] font-bold text-neutral-600 truncate">
-                        Linked as: {wacrmAccountName}
+                        Linked as: {item.accountName}
                       </span>
                     </div>
                   )}
