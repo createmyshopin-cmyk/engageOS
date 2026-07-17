@@ -65,6 +65,9 @@ export interface WatiIntegration {
   coupon_template_name: string | null;
   coupon_template_language: string;
   auto_send_coupons: boolean;
+  participation_template_name: string | null;
+  participation_template_language: string;
+  auto_send_participation: boolean;
   status: "connected" | "error" | "disconnected";
   last_error: string | null;
   last_verified_at: string | null;

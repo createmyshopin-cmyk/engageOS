@@ -161,6 +161,18 @@ export async function syncPlayToWati(params: {
         couponCode: result.coupon_code,
       });
     }
+    // WATI participation delivery (losers only, opt-in per tenant)
+    else if (!result.won) {
+      await deliverWatiParticipation({
+        tenant,
+        business,
+        campaignId: campaign?.id ?? null,
+        campaignEndsAt: campaign?.ends_at ?? null,
+        customer,
+        phone: params.phone,
+        customerName: params.name,
+      });
+    }
   } catch (err) {
     console.error("syncPlayToWati failed:", err);
   }
@@ -295,6 +307,118 @@ async function deliverWatiCoupon(args: {
       metadata: {
         couponCode: args.couponCode,
         channel: "wati",
+        reason: err instanceof WatiApiError ? `wati_error_${err.status}` : "send_error",
+        detail: err instanceof Error ? err.message : String(err),
+      },
+    });
+
+    return "failed";
+  }
+}
+
+/** Deliver participation message via WATI API v3 (for losers/non-winners) */
+async function deliverWatiParticipation(args: {
+  tenant: TenantWati;
+  business: BusinessRow;
+  campaignId: string | null;
+  campaignEndsAt: string | null;
+  customer: CustomerRow | null;
+  phone: string;
+  customerName: string;
+}): Promise<"sent" | "failed" | "skipped"> {
+  const { tenant, business, campaignId } = args;
+  const { integration } = tenant;
+
+  if (!integration.participation_template_name) return "skipped";
+  if (!integration.auto_send_participation) return "skipped";
+  if (args.customer?.wa_opt_out) return "skipped";
+
+  const baseEvent = {
+    businessId: business.id,
+    campaignId,
+    actorType: "system" as const,
+    actorId: null,
+  };
+
+  // Quota checks (hard limit ceiling)
+  if (business.wa_messages_sent >= business.wa_messages_quota) {
+    await recordCampaignEvent({
+      ...baseEvent,
+      eventType: "whatsapp.failed",
+      metadata: { reason: "quota_exhausted", channel: "wati", purpose: "participation" },
+    });
+    return "failed";
+  }
+
+  await recordCampaignEvent({
+    ...baseEvent,
+    eventType: "whatsapp.queue",
+    metadata: { channel: "wati", purpose: "participation" },
+  });
+
+  const endDate = args.campaignEndsAt ? formatDate(args.campaignEndsAt) : "N/A";
+
+  // Map custom params based on the template's variable list
+  let customParams = [
+    { name: "1", value: args.customerName },
+    { name: "2", value: "Better luck next time!" },
+    { name: "3", value: "N/A" },
+  ];
+
+  try {
+    const templates = await tenant.client.getTemplates(1, 100);
+    const matched = templates.find((t) => t.name === integration.participation_template_name);
+    if (matched) {
+      const bodyOriginal = (matched as any).body_original || (matched as any).body || "";
+      if (bodyOriginal) {
+        customParams = mapTemplateParams(bodyOriginal, {
+          customerName: args.customerName,
+          merchantName: business.name,
+          prizeName: "Better luck next time!",
+          couponCode: "N/A",
+          endDate,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to map WATI participation custom params, falling back to positional:", err);
+  }
+
+  try {
+    const response = await tenant.client.sendTemplate({
+      phoneNumber: args.phone,
+      templateName: integration.participation_template_name,
+      broadcastName: `participation_${args.phone}`,
+      channel: integration.channel_id,
+      params: customParams,
+    });
+
+    await supabaseAdmin().rpc("increment_wa_sent", {
+      p_business_id: business.id,
+      p_count: 1,
+    });
+
+    await recordCampaignEvent({
+      ...baseEvent,
+      eventType: "whatsapp.sent",
+      metadata: {
+        broadcastId: response.broadcast_id,
+        template: integration.participation_template_name,
+        channel: "wati",
+        purpose: "participation"
+      },
+    });
+
+    return "sent";
+  } catch (err) {
+    console.error("WATI participation send failed:", err);
+
+    await recordCampaignEvent({
+      ...baseEvent,
+      eventType: "whatsapp.failed",
+      metadata: {
+        channel: "wati",
+        purpose: "participation",
         reason: err instanceof WatiApiError ? `wati_error_${err.status}` : "send_error",
         detail: err instanceof Error ? err.message : String(err),
       },

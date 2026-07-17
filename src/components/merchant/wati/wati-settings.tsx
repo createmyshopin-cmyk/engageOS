@@ -63,6 +63,11 @@ export function WatiSettings() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
 
+  // Participation settings
+  const [participationTemplateName, setParticipationTemplateName] = useState("");
+  const [participationTemplateLanguage, setParticipationTemplateLanguage] = useState("en");
+  const [autoSendParticipation, setAutoSendParticipation] = useState(false);
+
   // Templates + test send
   const [templates, setTemplates] = useState<WatiTemplate[] | null>(null);
   const [testPhone, setTestPhone] = useState("");
@@ -79,6 +84,9 @@ export function WatiSettings() {
         setTemplateName(integ.couponTemplateName ?? "");
         setTemplateLanguage(integ.couponTemplateLanguage ?? "en");
         setAutoSend(!!integ.autoSendCoupons);
+        setParticipationTemplateName((integ as any).participationTemplateName ?? "");
+        setParticipationTemplateLanguage((integ as any).participationTemplateLanguage ?? "en");
+        setAutoSendParticipation(!!(integ as any).autoSendParticipation);
         setTestTemplate(integ.couponTemplateName ?? "");
       }
     } catch (err) {
@@ -148,6 +156,9 @@ export function WatiSettings() {
           couponTemplateName: templateName.trim() || null,
           couponTemplateLanguage: templateLanguage.trim() || "en",
           autoSendCoupons: autoSend,
+          participationTemplateName: participationTemplateName.trim() || null,
+          participationTemplateLanguage: participationTemplateLanguage.trim() || "en",
+          autoSendParticipation: autoSendParticipation,
         }),
       });
       if (!json.ok) setError((json.error as string) ?? "Failed to save");
@@ -265,71 +276,140 @@ export function WatiSettings() {
             )}
           </div>
 
-          {/* Coupon delivery settings */}
-          <form onSubmit={saveCouponSettings} className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
-            <h3 className="text-sm font-black text-[#111827]">Coupon Delivery Template</h3>
-            <p className="mt-1 text-[11px] font-medium text-[#6B7280]">
-              Choose the approved WATI template used for coupon messages. Body variables are
-              filled in order: 1 = customer name, 2 = prize name, 3 = coupon code.
-            </p>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
-              <label className="block">
-                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
-                  Template name
-                </span>
-                {templates && templates.length > 0 ? (
-                  <select
-                    value={templateName}
-                    onChange={(e) => setTemplateName(e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="">— none —</option>
-                    {templates.map((t) => (
-                      <option key={t.id} value={t.name}>
-                        {t.name} {t.status !== "APPROVED" ? `(${t.status})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
+          {/* WATI templates settings */}
+          <form onSubmit={saveCouponSettings} className="rounded-2xl border border-[#E5E7EB] bg-white p-5 space-y-6">
+            {/* Section 1: Coupon delivery */}
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-black text-[#111827]">Coupon Delivery Template</h3>
+                <p className="mt-1 text-[11px] font-medium text-[#6B7280]">
+                  Choose the approved WATI template used for coupon messages (sent when a customer wins a prize).
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+                    Template name
+                  </span>
+                  {templates && templates.length > 0 ? (
+                    <select
+                      value={templateName}
+                      onChange={(e) => setTemplateName(e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">— none —</option>
+                      {templates.map((t) => (
+                        <option key={t.id} value={t.name}>
+                          {t.name} {t.status !== "APPROVED" ? `(${t.status})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={templateName}
+                      onChange={(e) => setTemplateName(e.target.value)}
+                      placeholder="coupon_delivery_v1"
+                      className={inputCls}
+                    />
+                  )}
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+                    Language
+                  </span>
                   <input
-                    value={templateName}
-                    onChange={(e) => setTemplateName(e.target.value)}
-                    placeholder="coupon_delivery_v1"
+                    value={templateLanguage}
+                    onChange={(e) => setTemplateLanguage(e.target.value)}
+                    placeholder="en"
                     className={inputCls}
                   />
-                )}
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
-                  Language
-                </span>
-                <input
-                  value={templateLanguage}
-                  onChange={(e) => setTemplateLanguage(e.target.value)}
-                  placeholder="en"
-                  className={inputCls}
-                />
-              </label>
-              <label className="flex items-end gap-2 pb-2.5">
-                <input
-                  type="checkbox"
-                  checked={autoSend}
-                  onChange={(e) => setAutoSend(e.target.checked)}
-                  className="size-4 accent-[#3B82F6]"
-                />
-                <span className="text-xs font-bold text-[#111827]">
-                  Auto-send coupons on win
-                </span>
-              </label>
+                </label>
+                <label className="flex items-end gap-2 pb-2.5">
+                  <input
+                    type="checkbox"
+                    checked={autoSend}
+                    onChange={(e) => setAutoSend(e.target.checked)}
+                    className="size-4 accent-[#3B82F6]"
+                  />
+                  <span className="text-xs font-bold text-[#111827]">
+                    Auto-send coupons on win
+                  </span>
+                </label>
+              </div>
             </div>
-            <button
-              type="submit"
-              disabled={savingSettings}
-              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#3B82F6] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#2563EB] disabled:opacity-50 transition-colors"
-            >
-              {savingSettings && <Loader2 className="size-3.5 animate-spin" />}
-              Save settings
-            </button>
+
+            <hr className="border-[#F3F4F6]" />
+
+            {/* Section 2: General Participation delivery */}
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm font-black text-[#111827]">Participation Template</h3>
+                <p className="mt-1 text-[11px] font-medium text-[#6B7280]">
+                  Choose the approved WATI template sent to customers when they play/participate in your campaign but do not win a prize.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+                    Template name
+                  </span>
+                  {templates && templates.length > 0 ? (
+                    <select
+                      value={participationTemplateName}
+                      onChange={(e) => setParticipationTemplateName(e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="">— none —</option>
+                      {templates.map((t) => (
+                        <option key={t.id} value={t.name}>
+                          {t.name} {t.status !== "APPROVED" ? `(${t.status})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      value={participationTemplateName}
+                      onChange={(e) => setParticipationTemplateName(e.target.value)}
+                      placeholder="participation_thank_you"
+                      className={inputCls}
+                    />
+                  )}
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
+                    Language
+                  </span>
+                  <input
+                    value={participationTemplateLanguage}
+                    onChange={(e) => setParticipationTemplateLanguage(e.target.value)}
+                    placeholder="en"
+                    className={inputCls}
+                  />
+                </label>
+                <label className="flex items-end gap-2 pb-2.5">
+                  <input
+                    type="checkbox"
+                    checked={autoSendParticipation}
+                    onChange={(e) => setAutoSendParticipation(e.target.checked)}
+                    className="size-4 accent-[#3B82F6]"
+                  />
+                  <span className="text-xs font-bold text-[#111827]">
+                    Auto-send on play (no win)
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={savingSettings}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#3B82F6] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#2563EB] disabled:opacity-50 transition-colors"
+              >
+                {savingSettings && <Loader2 className="size-3.5 animate-spin" />}
+                Save settings
+              </button>
+            </div>
           </form>
 
           {/* Test send */}

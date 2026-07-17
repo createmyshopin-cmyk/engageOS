@@ -26,6 +26,9 @@ const settingsSchema = z.object({
   couponTemplateName: z.string().trim().max(120).nullable(),
   couponTemplateLanguage: z.string().trim().min(2).max(15).default("en"),
   autoSendCoupons: z.boolean().default(false),
+  participationTemplateName: z.string().trim().max(120).nullable(),
+  participationTemplateLanguage: z.string().trim().min(2).max(15).default("en"),
+  autoSendParticipation: z.boolean().default(false),
 });
 
 /** Current WATI integration status for this tenant. */
@@ -51,6 +54,9 @@ export async function GET(): Promise<NextResponse> {
             couponTemplateName: integration.coupon_template_name,
             couponTemplateLanguage: integration.coupon_template_language,
             autoSendCoupons: integration.auto_send_coupons,
+            participationTemplateName: integration.participation_template_name,
+            participationTemplateLanguage: integration.participation_template_language,
+            autoSendParticipation: integration.auto_send_participation,
             lastVerifiedAt: integration.last_verified_at,
           }
         : null,
@@ -180,6 +186,9 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
       coupon_template_name: parsed.data.couponTemplateName || null,
       coupon_template_language: parsed.data.couponTemplateLanguage,
       auto_send_coupons: parsed.data.autoSendCoupons,
+      participation_template_name: parsed.data.participationTemplateName || null,
+      participation_template_language: parsed.data.participationTemplateLanguage,
+      auto_send_participation: parsed.data.autoSendParticipation,
     });
     await repo.recordEvent("settings.updated", null, {
       section: "wati",
