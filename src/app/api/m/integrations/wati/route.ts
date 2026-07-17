@@ -88,11 +88,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const { baseUrl, apiToken, displayName } = parsed.data;
   const normalizedBase = baseUrl.replace(/\/+$/, "");
 
+  // Clean token if pasted with 'Bearer ' prefix
+  let cleanToken = apiToken;
+  if (cleanToken.toLowerCase().startsWith("bearer ")) {
+    cleanToken = cleanToken.substring(7).trim();
+  }
+
   // Verify by listing channels — a valid token returns 200, a bad one 401/403.
   let channelId: string | null = null;
   let channelName: string | null = null;
   try {
-    const client = new WatiClient(normalizedBase, apiToken);
+    const client = new WatiClient(normalizedBase, cleanToken);
     const channels = await client.getChannels();
     const whatsapp =
       channels.find((c) => c.channel?.toLowerCase() === "whatsapp") ?? channels[0];
@@ -112,8 +118,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     await upsertWatiIntegration(repo.businessId, {
       provider: "wati",
       base_url: normalizedBase,
-      api_token_enc: encryptSecret(apiToken),
-      api_token_last4: apiToken.slice(-4),
+      api_token_enc: encryptSecret(cleanToken),
+      api_token_last4: cleanToken.slice(-4),
       channel_id: channelId,
       channel_name: channelName,
       display_name: displayName || channelName || "WATI WhatsApp",
