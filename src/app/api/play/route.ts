@@ -4,6 +4,7 @@ import { playRequestSchema, normalizeSource } from "@/lib/validation";
 import { playCampaign } from "@/lib/db/rpc";
 import { clientIpFromHeaders } from "@/lib/ip";
 import { syncPlayToWacrm } from "@/lib/wacrm/sync";
+import { syncPlayToWati } from "@/lib/wati/sync";
 import type { PlayResult } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -46,17 +47,24 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       source: normalizeSource(parsed.data.source),
     });
 
-    // Sync to wacrm AFTER the response is sent — contact upsert + optional
+    // Sync to integrations AFTER the response is sent — contact upsert + optional
     // coupon delivery must never slow down or break the scratch experience.
-    after(() =>
-      syncPlayToWacrm({
+    after(() => {
+      void syncPlayToWacrm({
         merchantSlug: parsed.data.merchantSlug,
         campaignSlug: parsed.data.campaignSlug,
         phone: parsed.data.phone,
         name: parsed.data.name,
         result,
-      })
-    );
+      });
+      void syncPlayToWati({
+        merchantSlug: parsed.data.merchantSlug,
+        campaignSlug: parsed.data.campaignSlug,
+        phone: parsed.data.phone,
+        name: parsed.data.name,
+        result,
+      });
+    });
 
     return NextResponse.json({ ok: true, result });
   } catch (err) {

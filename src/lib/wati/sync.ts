@@ -1,0 +1,200 @@
+import { adminClient as supabaseAdmin, recordCampaignEvent } from "@/lib/db/rpc";
+import { WatiApiError } from "@/lib/wati/client";
+import { getWatiForBusiness, type TenantWati } from "@/lib/wati/adapter";
+import type { PlayResult } from "@/lib/types";
+
+interface BusinessRow {
+  id: string;
+  name: string;
+  wa_messages_sent: number;
+  wa_messages_quota: number;
+}
+
+interface CustomerRow {
+  id: string;
+  phone: string;
+  name: string;
+  wa_opt_out: boolean;
+}
+
+async function loadBusinessBySlug(slug: string): Promise<BusinessRow | null> {
+  const { data } = await supabaseAdmin()
+    .from("businesses")
+    .select("id, name, wa_messages_sent, wa_messages_quota")
+    .eq("slug", slug)
+    .maybeSingle<BusinessRow>();
+  return data ?? null;
+}
+
+async function loadCustomerByPhone(
+  businessId: string,
+  phone: string
+): Promise<CustomerRow | null> {
+  const { data } = await supabaseAdmin()
+    .from("customers")
+    .select("id, phone, name, wa_opt_out")
+    .eq("business_id", businessId)
+    .eq("phone", phone)
+    .maybeSingle<CustomerRow>();
+  return data ?? null;
+}
+
+/**
+ * Post-play sync for WATI WhatsApp integration.
+ * Triggers automated coupon delivery via WATI if configured.
+ */
+export async function syncPlayToWati(params: {
+  merchantSlug: string;
+  campaignSlug: string;
+  phone: string;
+  name: string;
+  result: PlayResult;
+}): Promise<void> {
+  const { result } = params;
+  if (result.status !== "ok") return;
+
+  try {
+    const business = await loadBusinessBySlug(params.merchantSlug);
+    if (!business) return;
+
+    const tenant = await getWatiForBusiness(business.id);
+    if (!tenant) return; // Merchant has not connected WATI
+
+    const { data: campaign } = await supabaseAdmin()
+      .from("campaigns")
+      .select("id, name, slug")
+      .eq("business_id", business.id)
+      .eq("slug", params.campaignSlug)
+      .maybeSingle<{ id: string; name: string; slug: string }>();
+
+    const customer = await loadCustomerByPhone(business.id, params.phone);
+
+    // WATI coupon delivery (winners only, opt-in per tenant)
+    if (result.won && result.coupon_code) {
+      await deliverWatiCoupon({
+        tenant,
+        business,
+        campaignId: campaign?.id ?? null,
+        customer,
+        phone: params.phone,
+        customerName: params.name,
+        prizeName: result.prize_name,
+        couponCode: result.coupon_code,
+      });
+    }
+  } catch (err) {
+    console.error("syncPlayToWati failed:", err);
+  }
+}
+
+/** Deliver coupon via WATI API v3 */
+async function deliverWatiCoupon(args: {
+  tenant: TenantWati;
+  business: BusinessRow;
+  campaignId: string | null;
+  customer: CustomerRow | null;
+  phone: string;
+  customerName: string;
+  prizeName: string;
+  couponCode: string;
+}): Promise<"sent" | "failed" | "skipped"> {
+  const { tenant, business, campaignId } = args;
+  const { integration } = tenant;
+
+  if (!integration.coupon_template_name) return "skipped";
+  if (!integration.auto_send_coupons) return "skipped";
+  if (args.customer?.wa_opt_out) return "skipped";
+
+  const { data: coupon } = await supabaseAdmin()
+    .from("coupons")
+    .select("id, wa_attempts")
+    .eq("business_id", business.id)
+    .eq("code", args.couponCode)
+    .maybeSingle<{ id: string; wa_attempts: number }>();
+
+  const baseEvent = {
+    businessId: business.id,
+    campaignId,
+    actorType: "system" as const,
+    actorId: null,
+  };
+
+  // Quota checks (hard limit ceiling)
+  if (business.wa_messages_sent >= business.wa_messages_quota) {
+    await recordCampaignEvent({
+      ...baseEvent,
+      eventType: "whatsapp.failed",
+      metadata: { reason: "quota_exhausted", couponCode: args.couponCode, channel: "wati" },
+    });
+    return "failed";
+  }
+
+  await recordCampaignEvent({
+    ...baseEvent,
+    eventType: "whatsapp.queue",
+    metadata: { couponCode: args.couponCode, channel: "wati" },
+  });
+
+  try {
+    const response = await tenant.client.sendTemplate({
+      phoneNumber: args.phone,
+      templateName: integration.coupon_template_name,
+      broadcastName: `coupon_${args.couponCode}`,
+      channel: integration.channel_id,
+      params: [
+        { name: "1", value: args.customerName },
+        { name: "2", value: args.prizeName },
+        { name: "3", value: args.couponCode }
+      ]
+    });
+
+    if (coupon) {
+      await supabaseAdmin()
+        .from("coupons")
+        .update({ wa_status: "sent", wa_attempts: coupon.wa_attempts + 1 })
+        .eq("business_id", business.id)
+        .eq("id", coupon.id);
+    }
+
+    await supabaseAdmin().rpc("increment_wa_sent", {
+      p_business_id: business.id,
+      p_count: 1,
+    });
+
+    await recordCampaignEvent({
+      ...baseEvent,
+      eventType: "whatsapp.sent",
+      metadata: {
+        couponCode: args.couponCode,
+        broadcastId: response.broadcast_id,
+        template: integration.coupon_template_name,
+        channel: "wati",
+      },
+    });
+
+    return "sent";
+  } catch (err) {
+    console.error("WATI coupon send failed:", err);
+
+    if (coupon) {
+      await supabaseAdmin()
+        .from("coupons")
+        .update({ wa_status: "failed", wa_attempts: coupon.wa_attempts + 1 })
+        .eq("business_id", business.id)
+        .eq("id", coupon.id);
+    }
+
+    await recordCampaignEvent({
+      ...baseEvent,
+      eventType: "whatsapp.failed",
+      metadata: {
+        couponCode: args.couponCode,
+        channel: "wati",
+        reason: err instanceof WatiApiError ? `wati_error_${err.status}` : "send_error",
+        detail: err instanceof Error ? err.message : String(err),
+      },
+    });
+
+    return "failed";
+  }
+}
