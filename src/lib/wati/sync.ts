@@ -17,6 +17,84 @@ interface CustomerRow {
   wa_opt_out: boolean;
 }
 
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  const day = d.getDate();
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = months[d.getMonth()];
+  const year = d.getFullYear();
+  return `${day} ${month}, ${year}`;
+}
+
+function mapTemplateParams(
+  bodyOriginal: string,
+  context: {
+    customerName: string;
+    merchantName: string;
+    prizeName: string;
+    couponCode: string;
+    endDate: string;
+  }
+): { name: string; value: string }[] {
+  const regex = /\{\{([^}]+)\}\}/g;
+  const matches: string[] = [];
+  let match;
+  while ((match = regex.exec(bodyOriginal)) !== null) {
+    if (match[1]) matches.push(match[1].trim());
+  }
+
+  if (matches.length === 0) return [];
+
+  // Check if they are simple sequential numbers (e.g. {{1}}, {{2}})
+  const isNumeric = matches.every((m) => /^\d+$/.test(m));
+  if (isNumeric) {
+    let positionalValues = [];
+    if (matches.length <= 3) {
+      // Traditional 3-variable layout
+      positionalValues = [
+        context.customerName,
+        context.prizeName,
+        context.couponCode
+      ];
+    } else {
+      // New premium layout with merchant name and end date
+      positionalValues = [
+        context.customerName,
+        context.merchantName,
+        context.prizeName,
+        context.couponCode,
+        context.endDate,
+        context.merchantName
+      ];
+    }
+    return matches.map((m, idx) => ({
+      name: m,
+      value: positionalValues[idx] || "",
+    }));
+  }
+
+  // Otherwise, match by variable name (case-insensitive, strip symbols)
+  return matches.map((m) => {
+    const key = m.toLowerCase().replace(/[^a-z0-9]/g, "");
+    let value = "";
+    if (key.includes("customer") || key === "name") {
+      value = context.customerName;
+    } else if (key.includes("merchant") || key.includes("business") || key.includes("team")) {
+      value = context.merchantName;
+    } else if (key.includes("gift") || key.includes("prize") || key.includes("reward")) {
+      value = context.prizeName;
+    } else if (key.includes("coupon") || key.includes("code")) {
+      value = context.couponCode;
+    } else if (key.includes("date") || key.includes("until") || key.includes("expiry") || key.includes("valid")) {
+      value = context.endDate;
+    } else {
+      value = "";
+    }
+    return { name: m, value };
+  });
+}
+
 async function loadBusinessBySlug(slug: string): Promise<BusinessRow | null> {
   const { data } = await supabaseAdmin()
     .from("businesses")
@@ -62,10 +140,10 @@ export async function syncPlayToWati(params: {
 
     const { data: campaign } = await supabaseAdmin()
       .from("campaigns")
-      .select("id, name, slug")
+      .select("id, name, slug, ends_at")
       .eq("business_id", business.id)
       .eq("slug", params.campaignSlug)
-      .maybeSingle<{ id: string; name: string; slug: string }>();
+      .maybeSingle<{ id: string; name: string; slug: string; ends_at: string }>();
 
     const customer = await loadCustomerByPhone(business.id, params.phone);
 
@@ -75,6 +153,7 @@ export async function syncPlayToWati(params: {
         tenant,
         business,
         campaignId: campaign?.id ?? null,
+        campaignEndsAt: campaign?.ends_at ?? null,
         customer,
         phone: params.phone,
         customerName: params.name,
@@ -92,6 +171,7 @@ async function deliverWatiCoupon(args: {
   tenant: TenantWati;
   business: BusinessRow;
   campaignId: string | null;
+  campaignEndsAt: string | null;
   customer: CustomerRow | null;
   phone: string;
   customerName: string;
@@ -107,10 +187,10 @@ async function deliverWatiCoupon(args: {
 
   const { data: coupon } = await supabaseAdmin()
     .from("coupons")
-    .select("id, wa_attempts")
+    .select("id, wa_attempts, expires_at")
     .eq("business_id", business.id)
     .eq("code", args.couponCode)
-    .maybeSingle<{ id: string; wa_attempts: number }>();
+    .maybeSingle<{ id: string; wa_attempts: number; expires_at: string }>();
 
   const baseEvent = {
     businessId: business.id,
@@ -135,17 +215,42 @@ async function deliverWatiCoupon(args: {
     metadata: { couponCode: args.couponCode, channel: "wati" },
   });
 
+  const expiresAt = coupon?.expires_at || args.campaignEndsAt || new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString();
+  const endDate = formatDate(expiresAt);
+
+  // Map custom params based on the template's variable list (fetched from WATI)
+  let customParams = [
+    { name: "1", value: args.customerName },
+    { name: "2", value: args.prizeName },
+    { name: "3", value: args.couponCode },
+  ];
+
+  try {
+    const templates = await tenant.client.getTemplates(1, 100);
+    const matched = templates.find((t) => t.name === integration.coupon_template_name);
+    if (matched) {
+      const bodyOriginal = (matched as any).body_original || (matched as any).body || "";
+      if (bodyOriginal) {
+        customParams = mapTemplateParams(bodyOriginal, {
+          customerName: args.customerName,
+          merchantName: business.name,
+          prizeName: args.prizeName,
+          couponCode: args.couponCode,
+          endDate,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Failed to map WATI custom params, falling back to positional:", err);
+  }
+
   try {
     const response = await tenant.client.sendTemplate({
       phoneNumber: args.phone,
       templateName: integration.coupon_template_name,
       broadcastName: `coupon_${args.couponCode}`,
       channel: integration.channel_id,
-      params: [
-        { name: "1", value: args.customerName },
-        { name: "2", value: args.prizeName },
-        { name: "3", value: args.couponCode }
-      ]
+      params: customParams,
     });
 
     if (coupon) {
