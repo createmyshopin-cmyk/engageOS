@@ -80,21 +80,31 @@ export function WatiAutomationTab({
           messages becomes a WATI contact, so bots you build there trigger on the same conversations.
           WATI’s API doesn’t expose an automation builder, so manage these in WATI directly.
         </p>
-        {base ? (
-          <a
-            href={`${base}/automations`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-4 inline-flex items-center gap-2 rounded-xl border border-[#3B82F6]/30 bg-[#EFF6FF] px-4 py-2.5 text-xs font-bold text-[#2563EB] hover:bg-[#DBEAFE] transition-colors"
-          >
-            <ExternalLink className="size-3.5" />
-            Open automations in WATI
-          </a>
-        ) : (
-          <p className="mt-4 text-[11px] font-bold text-[#9CA3AF]">
-            Reconnect WATI to open your workspace.
-          </p>
-        )}
+        {(() => {
+          const matches = baseUrl ? baseUrl.match(/\/(\d+)(?:\/|$)/) : null;
+          const watiId = matches ? matches[1] : "";
+          const automationsUrl = watiId
+            ? `https://live.wati.io/${watiId}/automations`
+            : base
+              ? `${base}/automations`
+              : null;
+
+          return automationsUrl ? (
+            <a
+              href={automationsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 rounded-xl border border-[#3B82F6]/30 bg-[#EFF6FF] px-4 py-2.5 text-xs font-bold text-[#2563EB] hover:bg-[#DBEAFE] transition-colors"
+            >
+              <ExternalLink className="size-3.5" />
+              Open automations in WATI
+            </a>
+          ) : (
+            <p className="mt-4 text-[11px] font-bold text-[#9CA3AF]">
+              Reconnect WATI to open your workspace.
+            </p>
+          );
+        })()}
       </div>
     </div>
   );

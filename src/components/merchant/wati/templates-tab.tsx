@@ -67,7 +67,7 @@ export function WatiTemplatesTab({ baseUrl }: { baseUrl: string | null }) {
         // Only surface Meta-approved templates — those are the only ones that
         // can actually be sent, so pending/rejected drafts are noise here.
         const approved = ((json.templates as WatiTemplate[]) ?? []).filter(
-          (t) => t.status === "APPROVED"
+          (t) => t.status?.toUpperCase() === "APPROVED"
         );
         setTemplates(approved);
       } else setError(json.error ?? "Failed to load templates");
@@ -93,7 +93,13 @@ export function WatiTemplatesTab({ baseUrl }: { baseUrl: string | null }) {
     }
   }
 
-  const templatesUrl = baseUrl ? `${baseUrl.replace(/\/+$/, "")}/templates` : null;
+  const matches = baseUrl ? baseUrl.match(/\/(\d+)(?:\/|$)/) : null;
+  const watiId = matches ? matches[1] : "";
+  const templatesUrl = watiId
+    ? `https://live.wati.io/${watiId}/messageTemplate`
+    : baseUrl
+      ? `${baseUrl.replace(/\/+$/, "")}/templates`
+      : null;
 
   return (
     <div className="space-y-5">
@@ -215,7 +221,7 @@ export function WatiTemplatesTab({ baseUrl }: { baseUrl: string | null }) {
                     <td className="px-3 py-2.5">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wide ${
-                          t.status === "APPROVED"
+                          t.status?.toUpperCase() === "APPROVED"
                             ? "bg-[#DCFCE7] text-[#16A34A]"
                             : "bg-[#FEF3C7] text-[#B45309]"
                         }`}
