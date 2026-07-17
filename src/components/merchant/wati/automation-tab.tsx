@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Workflow,
   Trophy,
@@ -9,7 +9,12 @@ import {
   Ticket,
   ArrowRight,
   Bot,
+  Webhook,
+  Copy,
+  Check,
+  Loader2,
 } from "lucide-react";
+import { fetchWatiConsole } from "./api";
 
 /**
  * Automation tab. Two layers:
@@ -31,6 +36,9 @@ export function WatiAutomationTab({
 
   return (
     <div className="space-y-5">
+      {/* Inbound webhook — delivery receipts + replies */}
+      <WatiWebhookCard />
+
       {/* EngageOS automations */}
       <div className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
         <div className="flex items-center gap-2">
@@ -133,6 +141,76 @@ function AutomationCard({
       <p className="mt-2 text-[10px] font-bold uppercase tracking-wider text-[#9CA3AF]">
         {trigger}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Inbound webhook setup. Surfaces the tenant's unique callback URL (with its
+ * secret token) so the merchant can paste it into WATI → Webhooks. Once wired,
+ * WATI posts delivery receipts (Sent/Delivered/Read/Failed) and inbound replies
+ * back to EngageOS, which updates coupon status, timestamps, and analytics.
+ */
+function WatiWebhookCard() {
+  const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetchWatiConsole("/api/m/integrations/wati")
+      .then((s) => {
+        if (alive) setWebhookUrl(typeof s.webhookUrl === "string" ? s.webhookUrl : null);
+      })
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const copy = () => {
+    if (!webhookUrl) return;
+    navigator.clipboard.writeText(webhookUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    });
+  };
+
+  return (
+    <div className="rounded-2xl border border-[#3B82F6]/25 bg-[#EFF6FF] p-5">
+      <div className="flex items-center gap-2">
+        <Webhook className="size-4 text-[#3B82F6]" />
+        <h3 className="text-sm font-black text-[#111827]">Delivery receipts & replies (webhook)</h3>
+      </div>
+      <p className="mt-2 max-w-2xl text-[11px] font-medium leading-relaxed text-[#4B5563]">
+        Paste this URL into WATI → <span className="font-bold">Connectors / Webhooks → Add Webhook</span>,
+        enable it, and subscribe to the message + template-status events. WATI will then report
+        Sent → Delivered → Read → Failed back to EngageOS, keeping coupon status and analytics live.
+        This URL contains your private token — treat it like a password.
+      </p>
+
+      {loading ? (
+        <div className="mt-4 flex items-center gap-2 text-[11px] font-bold text-[#6B7280]">
+          <Loader2 className="size-3.5 animate-spin text-[#3B82F6]" /> Loading webhook URL…
+        </div>
+      ) : webhookUrl ? (
+        <div className="mt-4 flex items-stretch gap-2">
+          <code className="min-w-0 flex-1 truncate rounded-xl border border-[#3B82F6]/20 bg-white px-3.5 py-2.5 text-[11px] font-medium text-[#111827]">
+            {webhookUrl}
+          </code>
+          <button
+            onClick={copy}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-[#3B82F6] px-3.5 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/20 hover:bg-[#2563EB] transition-colors"
+          >
+            {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      ) : (
+        <p className="mt-4 text-[11px] font-bold text-[#9CA3AF]">
+          Reconnect WATI to generate your webhook URL.
+        </p>
+      )}
     </div>
   );
 }

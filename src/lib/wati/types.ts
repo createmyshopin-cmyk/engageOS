@@ -82,6 +82,8 @@ export interface WatiIntegration {
   participation_template_name: string | null;
   participation_template_language: string;
   auto_send_participation: boolean;
+  /** Per-tenant opaque bearer secret carried in the inbound webhook URL (?token=…). */
+  webhook_token: string;
   status: "connected" | "error" | "disconnected";
   last_error: string | null;
   last_verified_at: string | null;

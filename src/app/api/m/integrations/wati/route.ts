@@ -40,9 +40,15 @@ export async function GET(): Promise<NextResponse> {
 
   try {
     const integration = await getWatiIntegration(repo.businessId);
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/+$/, "");
+    const webhookUrl =
+      integration && appUrl
+        ? `${appUrl}/api/webhooks/wati?token=${integration.webhook_token}`
+        : null;
     return NextResponse.json({
       ok: true,
       connected: !!integration && integration.status !== "disconnected",
+      webhookUrl,
       integration: integration
         ? {
             baseUrl: integration.base_url,
