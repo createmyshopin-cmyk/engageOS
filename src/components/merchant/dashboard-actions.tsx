@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   Loader2,
   AlertCircle,
+  Check,
 } from "lucide-react";
 import {
   updateCampaignStatusAction,
@@ -30,6 +31,21 @@ export function DashboardActions({ campaign, merchantSlug }: DashboardActionsPro
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    if (typeof window === "undefined" || !campaign.slug) return;
+    const playUrl = `${window.location.origin}/c/${merchantSlug}/${campaign.slug}`;
+    navigator.clipboard.writeText(playUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => {
+        setCopied(false);
+        setOpen(false);
+      }, 1500);
+    }).catch(err => {
+      console.error("Failed to copy text: ", err);
+    });
+  }
 
   function act(fn: () => Promise<{ error: string | null }>) {
     setOpen(false);
@@ -137,6 +153,24 @@ export function DashboardActions({ campaign, merchantSlug }: DashboardActionsPro
                   <Copy className="size-3.5" />
                   Duplicate
                 </button>
+                {campaign.slug && (
+                  <button
+                    onClick={handleCopy}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 transition-colors cursor-pointer"
+                  >
+                    {copied ? (
+                      <>
+                        <Check className="size-3.5 text-emerald-600" />
+                        Copied!
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="size-3.5" />
+                        Copy Link
+                      </>
+                    )}
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     if (confirm("Are you sure you want to delete this campaign?")) {
