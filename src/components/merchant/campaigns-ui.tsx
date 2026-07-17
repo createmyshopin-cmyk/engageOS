@@ -16,6 +16,7 @@ import {
   Megaphone,
   Loader2,
   AlertCircle,
+  Check,
 } from "lucide-react";
 import {
   updateCampaignStatusAction,
@@ -70,6 +71,18 @@ export function CampaignActions({
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    if (typeof window === "undefined" || !campaign.slug) return;
+    const playUrl = `${window.location.origin}/c/${merchantSlug}/${campaign.slug}`;
+    navigator.clipboard.writeText(playUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(err => {
+      console.error("Failed to copy text: ", err);
+    });
+  }
 
   function act(fn: () => Promise<{ error: string | null }>) {
     setOpen(false);
@@ -142,6 +155,26 @@ export function CampaignActions({
           >
             {isPending ? <Loader2 className="size-3.5 animate-spin" /> : <PlayCircle className="size-3.5" />}
             Resume
+          </button>
+        )}
+
+        {/* Copy Link */}
+        {campaign.slug && (
+          <button
+            onClick={handleCopy}
+            className="inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 bg-white border border-neutral-200 text-neutral-700 rounded-lg hover:bg-neutral-50 transition-colors cursor-pointer"
+          >
+            {copied ? (
+              <>
+                <Check className="size-3.5 text-emerald-600" />
+                Copied!
+              </>
+            ) : (
+              <>
+                <Copy className="size-3.5" />
+                Copy Link
+              </>
+            )}
           </button>
         )}
 
