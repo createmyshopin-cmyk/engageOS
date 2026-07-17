@@ -32,7 +32,7 @@ const settingsSchema = z.object({
 });
 
 /** Current WATI integration status for this tenant. */
-export async function GET(): Promise<NextResponse> {
+export async function GET(req: NextRequest): Promise<NextResponse> {
   const repo = await getTenantRepository();
   if (!repo) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
@@ -40,7 +40,8 @@ export async function GET(): Promise<NextResponse> {
 
   try {
     const integration = await getWatiIntegration(repo.businessId);
-    const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/+$/, "");
+    // Use the actual request origin (e.g. https://engage-os-phi.vercel.app) so it's always production-ready
+    const appUrl = req.nextUrl.origin;
     const webhookUrl =
       integration && appUrl
         ? `${appUrl}/api/webhooks/wati?token=${integration.webhook_token}`
