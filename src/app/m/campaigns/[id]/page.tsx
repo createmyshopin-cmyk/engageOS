@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect, notFound } from "next/navigation";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
-import { CampaignStatusBadge } from "@/components/merchant/campaigns-ui";
+import { CampaignStatusBadge, CampaignTypeBadge } from "@/components/merchant/campaigns-ui";
 import { CampaignDetailTabs } from "@/components/merchant/campaign-detail-tabs";
 import { CampaignEventsTimeline } from "@/components/merchant/campaign-events-timeline";
 import type { Campaign, Prize, Customer } from "@/lib/types";
@@ -124,6 +124,7 @@ export default async function CampaignDetailPage({ params }: PageProps) {
               <div className="flex items-center gap-3 flex-wrap">
                 <h1 className="text-xl font-black text-neutral-900">{campaign.name}</h1>
                 <CampaignStatusBadge status={campaign.status} />
+                <CampaignTypeBadge type={campaign.campaign_type} />
               </div>
               <p className="text-sm text-neutral-500 mt-1">{campaign.headline}</p>
             </div>

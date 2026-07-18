@@ -240,6 +240,7 @@ export function CampaignWizard() {
   const [isPending, startTransition] = useTransition();
   const [serverError, setServerError] = useState<string | null>(null);
   const [published, setPublished] = useState(false);
+  const [publishedStatus, setPublishedStatus] = useState<"active" | "scheduled" | "draft">("draft");
 
   // Form State
   const [name, setName] = useState("Onam Mega Scratch & Win");
@@ -365,7 +366,7 @@ export function CampaignWizard() {
     reader.readAsDataURL(file);
   }
 
-  function publish() {
+  function publish(asDraft = false) {
     setServerError(null);
     startTransition(async () => {
       const result = await createCampaignAction(undefined as any, {
@@ -381,24 +382,36 @@ export function CampaignWizard() {
         prizes,
         campaign_type: selectedType,
         coupon_rules: selectedType === "coupon_drop" ? couponRules : undefined,
+        publish: !asDraft,
       });
       if (result.error) {
         setServerError(result.error);
         setStep(6);
       } else {
+        setPublishedStatus((result.status as typeof publishedStatus) ?? (asDraft ? "draft" : "active"));
         setPublished(true);
       }
     });
   }
 
   if (published) {
+    const isLive = publishedStatus === "active";
+    const isScheduled = publishedStatus === "scheduled";
     return (
       <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-12 text-center max-w-lg mx-auto my-12">
         <div className="flex items-center justify-center size-20 rounded-3xl bg-emerald-50 mx-auto mb-6">
           <CheckCircle2 className="size-10 text-emerald-500" />
         </div>
-        <h2 className="text-2xl font-black text-neutral-900 mb-2">Campaign Created! 🎉</h2>
-        <p className="text-neutral-500 mb-8">Your campaign is saved as a draft. Activate it to start getting QR scans.</p>
+        <h2 className="text-2xl font-black text-neutral-900 mb-2">
+          {isLive ? "Campaign is Live! 🎉" : isScheduled ? "Campaign Scheduled! 🗓️" : "Draft Saved ✏️"}
+        </h2>
+        <p className="text-neutral-500 mb-8">
+          {isLive
+            ? "Your campaign is active and ready for QR scans."
+            : isScheduled
+              ? "Your campaign will go live automatically on its start date."
+              : "Your campaign is saved as a draft. Activate it to start getting QR scans."}
+        </p>
         <button
           onClick={() => router.push("/m/campaigns")}
           className="w-full bg-[#16A34A] hover:bg-[#15803D] text-white font-bold py-3 rounded-xl transition-colors text-sm cursor-pointer"
@@ -1178,6 +1191,12 @@ export function CampaignWizard() {
             {step === 6 && (
               <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 md:p-8 max-w-2xl mx-auto space-y-6">
                 <StepHeader icon={Rocket} title="Review & Publish" sub="Please review details before saving." />
+                {serverError && (
+                  <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                    <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+                    <span>{serverError}</span>
+                  </div>
+                )}
                 <div className="space-y-4">
                   <ReviewRow label="Name" value={name} />
                   <ReviewRow label="Headline" value={headline} />
@@ -1186,6 +1205,9 @@ export function CampaignWizard() {
                   <ReviewRow label="Starts" value={startsAt} />
                   <ReviewRow label="Ends" value={endsAt} />
                 </div>
+                <p className="text-xs text-neutral-500">
+                  Publishing makes the campaign live immediately (or scheduled if the start date is in the future). Save as draft to keep editing before it goes live.
+                </p>
               </div>
             )}
 
@@ -1213,14 +1235,15 @@ export function CampaignWizard() {
 
               <div className="flex items-center gap-4">
                 <button
-                  onClick={() => router.push("/m/campaigns")}
-                  className="text-xs font-bold text-neutral-400 hover:text-neutral-600 transition-colors cursor-pointer"
+                  onClick={() => publish(true)}
+                  disabled={isPending}
+                  className="text-xs font-bold text-neutral-400 hover:text-neutral-600 transition-colors cursor-pointer disabled:opacity-50"
                 >
                   Save as Draft
                 </button>
                 {step === 6 ? (
                   <button
-                    onClick={publish}
+                    onClick={() => publish(false)}
                     disabled={isPending}
                     className="inline-flex items-center gap-1 bg-[#16A34A] hover:bg-[#15803D] text-white text-xs font-bold px-6 py-2.5 rounded-full transition-colors shadow-lg shadow-green-500/20 cursor-pointer disabled:opacity-60"
                   >

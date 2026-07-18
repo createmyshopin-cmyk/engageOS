@@ -97,6 +97,8 @@ const createCampaignSchema = z
     prizes: z.array(prizeSchema).min(1, "Add at least one reward").max(8),
     campaign_type: campaignTypeSchema,
     coupon_rules: couponRulesSchema.optional(),
+    // When true the campaign is created live (status='active') instead of a draft.
+    publish: z.coerce.boolean().default(false),
   })
   .superRefine((data, ctx) => {
     if (data.campaign_type === "coupon_drop" && !data.coupon_rules) {
@@ -128,6 +130,7 @@ const updateCampaignSchema = z.object({
 export interface ActionState {
   error: string | null;
   success?: boolean;
+  status?: CampaignStatus;
 }
 
 export async function createCampaignAction(
@@ -155,11 +158,20 @@ export async function createCampaignAction(
     prizes,
     campaign_type,
     coupon_rules,
+    publish,
   } = validated.data;
 
   if (starts_at.getTime() >= ends_at.getTime()) {
     return { error: "End date must be after start date" };
   }
+
+  // Publish intent → go live now, or schedule if the start date is still ahead.
+  // Otherwise the campaign is saved as an editable draft.
+  const status: CampaignStatus = publish
+    ? starts_at.getTime() > Date.now()
+      ? "scheduled"
+      : "active"
+    : "draft";
 
   try {
     const slug = await repo.freeCampaignSlug(name);
@@ -176,7 +188,7 @@ export async function createCampaignAction(
         logo_url: logo_url || null,
         terms: terms || null,
         coupon_prefix: coupon_prefix.toUpperCase(),
-        status: "draft",
+        status,
         campaign_type,
         starts_at: starts_at.toISOString(),
         ends_at: ends_at.toISOString(),
@@ -251,7 +263,33 @@ export async function createCampaignAction(
       },
       await eventContext()
     );
-    return { error: null, success: true };
+
+    // Publishing straight to a live/scheduled state emits the matching lifecycle
+    // event so the campaign timeline reflects the activation, not just creation.
+    if (status !== "draft") {
+      await repo.recordEvent(
+        statusEventType("draft", status),
+        campaign.id,
+        { from: "draft", to: status },
+        await eventContext()
+      );
+    }
+
+    // Coupon Drop published live: mint the unique-code pool off the request path.
+    // Mirrors updateCampaignStatusAction — failures set pool_status='error' and
+    // the play engine falls back to internal codes so customers always win.
+    if (status === "active" && campaign_type === "coupon_drop") {
+      const businessId = repo.businessId;
+      const campaignId = campaign.id;
+      after(async () => {
+        const { activateCouponDropPool } = await import(
+          "@/lib/shopify/coupon-drop-orchestrator"
+        );
+        await activateCouponDropPool(businessId, campaignId);
+      });
+    }
+
+    return { error: null, success: true, status };
   } catch (err: any) {
     console.error("Create campaign exception:", err);
     return { error: err.message ?? "An unexpected error occurred" };

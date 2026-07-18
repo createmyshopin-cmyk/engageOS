@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
-import { CampaignStatusBadge, CampaignActions, EmptyState } from "@/components/merchant/campaigns-ui";
+import { CampaignStatusBadge, CampaignTypeBadge, campaignTypeLabel, CampaignActions, EmptyState } from "@/components/merchant/campaigns-ui";
 import type { Campaign, Prize } from "@/lib/types";
 import { QrCode, Users, Gift, MessageSquare, BarChart3, Plus, CalendarDays } from "lucide-react";
 
@@ -48,7 +48,7 @@ export default async function CampaignsPage() {
       "campaigns",
       `
       id, name, slug, headline, description, banner_url, logo_url, terms,
-      coupon_prefix, status, starts_at, ends_at, created_at, business_id
+      coupon_prefix, status, campaign_type, starts_at, ends_at, created_at, business_id
     `
     )
     .order("created_at", { ascending: false });
@@ -174,7 +174,7 @@ export default async function CampaignsPage() {
                       <div className="text-2xl font-black text-white/20 uppercase tracking-wider px-4 line-clamp-2">
                         {campaign.name}
                       </div>
-                      <div className="text-xs text-white/30 mt-1 font-semibold">Scratch & Win</div>
+                      <div className="text-xs text-white/30 mt-1 font-semibold">{campaignTypeLabel(campaign.campaign_type)}</div>
                     </div>
                   </div>
                 )}
@@ -189,9 +189,7 @@ export default async function CampaignsPage() {
                 <div>
                   <h2 className="text-base font-bold text-neutral-900 line-clamp-1">{campaign.name}</h2>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
-                      Scratch & Win
-                    </span>
+                    <CampaignTypeBadge type={campaign.campaign_type} />
                   </div>
                 </div>
 
