@@ -51,6 +51,7 @@ const REQUIRED_SCOPES: Array<{ handle: string; for: string }> = [
   { handle: "read_orders", for: "Orders" },
   { handle: "read_customers", for: "Customers" },
   { handle: "read_inventory", for: "Inventory levels" },
+  { handle: "read_locations", for: "Store locations (inventory)" },
   { handle: "read_price_rules", for: "Discounts / price rules" },
   { handle: "read_discounts", for: "Discount codes" },
 ];

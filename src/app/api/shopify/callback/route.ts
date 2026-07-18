@@ -101,16 +101,18 @@ export async function GET(request: NextRequest) {
   return NextResponse.redirect(`${appUrl}/m/shopify?connected=1`);
 }
 
-/** Only enqueue a resource whose read scope the merchant actually granted. */
+/** Only enqueue a resource whose read scope(s) the merchant actually granted. */
 function scopeCovers(scope: string, resource: SyncResource): boolean {
   const s = scope.split(",").map((x) => x.trim());
-  const need: Record<SyncResource, string> = {
-    products: "read_products",
-    orders: "read_orders",
-    customers: "read_customers",
-    collections: "read_products",
-    inventory: "read_inventory",
-    discounts: "read_price_rules",
+  // Most resources need one scope; inventory needs read_inventory AND
+  // read_locations (the sync enumerates store locations before pulling levels).
+  const need: Record<SyncResource, string[]> = {
+    products: ["read_products"],
+    orders: ["read_orders"],
+    customers: ["read_customers"],
+    collections: ["read_products"],
+    inventory: ["read_inventory", "read_locations"],
+    discounts: ["read_price_rules"],
   };
-  return s.includes(need[resource]);
+  return need[resource].every((scopeName) => s.includes(scopeName));
 }
