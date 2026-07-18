@@ -30,6 +30,7 @@ import { updateCampaignStatusAction, retryFailedWhatsAppAction, updateCampaignAc
 import { ExperienceForm } from "@/components/merchant/experience-form";
 import { deleteRewardAction, duplicateRewardAction, setRewardActiveAction } from "@/app/m/campaigns/[id]/rewards/actions";
 import { RewardForm } from "@/components/merchant/reward-form";
+import { CampaignTrackingForm } from "@/components/merchant/tracking/campaign-tracking-form";
 
 interface Stats {
   plays: number;
@@ -361,7 +362,12 @@ export function CampaignDetailTabs({ campaign, prizes, recentCustomers, couponSt
 
       {/* ── Settings Tab ── */}
       {activeTab === "settings" && (
-        <SettingsForm campaign={campaign} />
+        <div className="space-y-6">
+          <SettingsForm campaign={campaign} />
+          <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6">
+            <CampaignTrackingForm campaignId={campaign.id} />
+          </div>
+        </div>
       )}
     </div>
   );

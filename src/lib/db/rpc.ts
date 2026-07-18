@@ -1,6 +1,7 @@
 import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import type { CampaignDisplay, PlayResult, RedeemResult } from "@/lib/types";
+import type { ProviderKey, TrackingConfig } from "@/lib/tracking/types";
 
 /**
  * Service-role client for RPCs. Server-only module — importing it from
@@ -32,6 +33,35 @@ export async function getCampaignDisplay(
   });
   if (error) throw new Error(`campaign_display failed: ${error.message}`);
   return (data as CampaignDisplay | null) ?? null;
+}
+
+/**
+ * Resolve the effective marketing-tracking config for a live campaign
+ * (business defaults ← campaign overrides). Returns only ENABLED providers'
+ * PUBLIC pixel/tag IDs — never secrets. Best-effort: any failure yields an
+ * empty list so tracking never blocks the customer page from rendering.
+ */
+export async function getCampaignTracking(
+  merchantSlug: string,
+  campaignSlug: string,
+): Promise<TrackingConfig[]> {
+  try {
+    const { data, error } = await adminClient().rpc("resolve_campaign_tracking", {
+      p_merchant_slug: merchantSlug,
+      p_slug: campaignSlug,
+    });
+    if (error) {
+      console.error(`resolve_campaign_tracking failed: ${error.message}`);
+      return [];
+    }
+    const rows = (data as { provider: ProviderKey; provider_id: string }[] | null) ?? [];
+    return rows
+      .filter((r) => r.provider && r.provider_id)
+      .map((r) => ({ provider: r.provider, providerId: r.provider_id }));
+  } catch (err) {
+    console.error("resolve_campaign_tracking threw:", err);
+    return [];
+  }
 }
 
 /**

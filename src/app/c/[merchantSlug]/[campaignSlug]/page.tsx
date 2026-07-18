@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import ReactDOM from "react-dom";
 import { headers } from "next/headers";
-import { getCampaignDisplay, recordScan } from "@/lib/db/rpc";
+import { getCampaignDisplay, getCampaignTracking, recordScan } from "@/lib/db/rpc";
 import { clientIpFromHeaders } from "@/lib/ip";
 import { normalizeSource } from "@/lib/validation";
 import { PlayFlow } from "@/components/play/play-flow";
 import { BrandHeader } from "@/components/play/brand-header";
 import { Preloader } from "@/components/play/preloader";
+import { TrackingBootstrap } from "@/lib/tracking/react";
+import type { TrackingConfig } from "@/lib/tracking/types";
 
 export const dynamic = "force-dynamic";
 
@@ -42,9 +44,13 @@ export default async function PlayPage({ params, searchParams }: PageProps) {
 
   let display = null;
   let loadFailed = false;
+  let trackingConfigs: TrackingConfig[] = [];
   if (MERCHANT_SLUG_RE.test(merchantSlug) && CAMPAIGN_SLUG_RE.test(campaignSlug)) {
     try {
-      display = await getCampaignDisplay(merchantSlug, campaignSlug);
+      [display, trackingConfigs] = await Promise.all([
+        getCampaignDisplay(merchantSlug, campaignSlug),
+        getCampaignTracking(merchantSlug, campaignSlug),
+      ]);
     } catch (err) {
       console.error("play page load error:", err);
       loadFailed = true;
@@ -104,36 +110,47 @@ export default async function PlayPage({ params, searchParams }: PageProps) {
 
   return (
     <Shell>
-      <Preloader
-        businessName={display.business_name}
-        campaignName={display.name}
-        logoUrl={display.logo_url}
-        preloadImages={prizeImages}
-      />
+      <TrackingBootstrap
+        configs={trackingConfigs}
+        context={{
+          campaignId: display.campaign_id,
+          campaignName: display.name,
+          merchantId: merchantSlug,
+          merchantName: display.business_name,
+          trafficSource: source,
+        }}
+      >
+        <Preloader
+          businessName={display.business_name}
+          campaignName={display.name}
+          logoUrl={display.logo_url}
+          preloadImages={prizeImages}
+        />
 
-      <BrandHeader
-        businessName={display.business_name}
-        campaignName={display.name}
-        logoUrl={display.logo_url}
-        headline={display.headline}
-      />
+        <BrandHeader
+          businessName={display.business_name}
+          campaignName={display.name}
+          logoUrl={display.logo_url}
+          headline={display.headline}
+        />
 
-      {display.prizes.length > 0 && (
-        <p className="mb-6 text-center text-xs text-neutral-500">
-          Win: {display.prizes.map((p) => p.name).join(" · ")}
-        </p>
-      )}
+        {display.prizes.length > 0 && (
+          <p className="mb-6 text-center text-xs text-neutral-500">
+            Win: {display.prizes.map((p) => p.name).join(" · ")}
+          </p>
+        )}
 
-      <PlayFlow
-        merchantSlug={merchantSlug}
-        campaignSlug={campaignSlug}
-        display={display}
-        source={source}
-      />
+        <PlayFlow
+          merchantSlug={merchantSlug}
+          campaignSlug={campaignSlug}
+          display={display}
+          source={source}
+        />
 
-      <footer className="mt-8 text-center text-[11px] text-neutral-400">
-        Powered by EngageOS
-      </footer>
+        <footer className="mt-8 text-center text-[11px] text-neutral-400">
+          Powered by EngageOS
+        </footer>
+      </TrackingBootstrap>
     </Shell>
   );
 }

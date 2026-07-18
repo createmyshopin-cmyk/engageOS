@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { ScratchCard } from "@/components/play/scratch-card";
 import { isSafeRedirectUrl } from "@/lib/validation";
+import { useTracking } from "@/lib/tracking/react";
 import type { CampaignDisplay, PlayResult, PrizeType, RedirectDestinationType } from "@/lib/types";
 
 interface PlayFlowProps {
@@ -199,12 +200,14 @@ function RedirectCountdown({
   url,
   delay,
   businessName,
+  track,
 }: {
   campaignId: string;
   destinationType: RedirectDestinationType;
   url: string;
   delay: number;
   businessName: string;
+  track: (event: import("@/lib/tracking/types").TrackingEventName, payload?: Record<string, unknown>) => void;
 }) {
   const [remaining, setRemaining] = useState(delay);
   const [cancelled, setCancelled] = useState(false);
@@ -223,6 +226,10 @@ function RedirectCountdown({
     }
     const { app, web } = buildDeepLink(destinationType, url);
     beacon(campaignId, "redirect.opened", { destinationType, url });
+    track("redirect_clicked", { destination: destinationType, url });
+    if (destinationType === "website" || destinationType === "product") {
+      track("shop_now_clicked", { destination: destinationType, url });
+    }
     // Try the native app link first (silently fails if not installed), then
     // always open the https URL so the customer reaches the destination.
     if (app) {
@@ -234,7 +241,7 @@ function RedirectCountdown({
     }
     window.open(web, "_blank", "noopener,noreferrer");
     beacon(campaignId, "redirect.completed", { destinationType });
-  }, [campaignId, destinationType, url]);
+  }, [campaignId, destinationType, url, track]);
 
   // Announce the redirect has started once.
   useEffect(() => {
@@ -324,10 +331,16 @@ function RedirectCountdown({
 }
 
 export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFlowProps) {
+  const { track } = useTracking();
   const [state, setState] = useState<Step>({ step: "form" });
   const [name, setName] = useState("");
   const [showConfetti, setShowConfetti] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (showConfetti && canvasRef.current) {
@@ -408,6 +421,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
     setSubmitting(true);
     setFieldErrors({});
     setFormError(null);
+    track("registration_started");
 
     try {
       const res = await fetch("/api/play", {
@@ -429,6 +443,8 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
 
       const result = data.result;
       if (result.status === "ok") {
+        track("registration_completed");
+        track("scratch_started");
         setState({ step: "scratch", result });
       } else {
         setState({ step: "blocked", reason: result.status });
@@ -454,7 +470,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
     const { result } = state;
     return (
       <div className="space-y-4">
-        {showConfetti && typeof document !== "undefined" && createPortal(
+        {showConfetti && mounted && createPortal(
           <canvas
             ref={canvasRef}
             className="fixed inset-0 pointer-events-none z-[9999]"
@@ -463,8 +479,25 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
         )}
         <ScratchCard onReveal={() => {
           setState({ step: "revealed", result });
+          track("scratch_completed");
           if (result.won) {
             beacon(display.campaign_id, "reward.viewed", { prizeType: result.prize_type });
+            track("reward_won", {
+              rewardName: result.prize_name,
+              prizeType: result.prize_type,
+              value: result.prize_value ?? undefined,
+            });
+            if (hasCode(result.prize_type)) {
+              track("coupon_generated", {
+                couponId: result.coupon_code,
+                couponType: result.prize_type,
+                rewardName: result.prize_name,
+              });
+              track("coupon_viewed", {
+                couponId: result.coupon_code,
+                couponType: result.prize_type,
+              });
+            }
             const confettiEnabled = display.experience ? display.experience.confetti_enabled : true;
             const soundEnabled = display.experience ? display.experience.sound_enabled : true;
             if (confettiEnabled) {
@@ -474,6 +507,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
               playVictorySound();
             }
           }
+          track("campaign_completed", { won: result.won });
         }}>
           {result.won ? (
             <div
@@ -540,6 +574,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
                         url={display.redirect.url}
                         delay={display.redirect.delay}
                         businessName={display.business_name}
+                        track={track}
                       />
                     )}
                 </div>
@@ -561,6 +596,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
                     url={display.redirect.url}
                     delay={display.redirect.delay}
                     businessName={display.business_name}
+                    track={track}
                   />
                 )}
             </div>
