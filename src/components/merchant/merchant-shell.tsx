@@ -11,6 +11,7 @@ import {
   MessageSquare,
   BarChart3,
   Radio,
+  Activity,
   Settings,
   HelpCircle,
   Menu,
@@ -25,6 +26,7 @@ import {
 } from "lucide-react";
 
 import { usePathname } from "next/navigation";
+import { QueryProvider } from "@/components/providers/query-provider";
 
 interface NavItem {
   icon: typeof LayoutDashboard;
@@ -38,7 +40,8 @@ const NAV_ITEMS: NavItem[] = [
   { icon: Trophy, label: "Winners", href: "/m/winners" },
   { icon: Gift, label: "Rewards", href: "/m/rewards" },
   { icon: Radio, label: "Sources", href: "/m/sources" },
-  { icon: Users, label: "Customers", href: "#" },
+  { icon: Users, label: "Customers", href: "/m/customers" },
+  { icon: Activity, label: "Activity", href: "/m/activity" },
   { icon: MessageSquare, label: "WhatsApp", href: "/m/whatsapp" },
   { icon: Blocks, label: "Integrations", href: "/m/integrations" },
   { icon: BarChart3, label: "Reports", href: "#" },
@@ -129,13 +132,14 @@ export function MerchantShell({
     };
   }, []);
 
-  const navItems = watiConnected
-    ? [
-        ...NAV_ITEMS.slice(0, 7), // through WhatsApp
-        WATI_NAV_ITEM,
-        ...NAV_ITEMS.slice(7),
-      ]
-    : NAV_ITEMS;
+  // Inject the WATI console right after WhatsApp (index-independent so adding
+  // nav items above WhatsApp never breaks the insertion point).
+  const navItems = (() => {
+    if (!watiConnected) return NAV_ITEMS;
+    const waIdx = NAV_ITEMS.findIndex((i) => i.href === "/m/whatsapp");
+    const at = waIdx === -1 ? NAV_ITEMS.length : waIdx + 1;
+    return [...NAV_ITEMS.slice(0, at), WATI_NAV_ITEM, ...NAV_ITEMS.slice(at)];
+  })();
 
   // Close avatar dropdown when clicking outside
   useEffect(() => {
@@ -400,7 +404,7 @@ export function MerchantShell({
 
         {/* Page content */}
         <main className="flex-1 max-w-7xl mx-auto w-full px-4 lg:px-8 py-6 space-y-6">
-          {children}
+          <QueryProvider>{children}</QueryProvider>
         </main>
       </div>
     </div>

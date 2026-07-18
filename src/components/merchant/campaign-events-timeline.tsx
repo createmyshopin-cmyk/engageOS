@@ -114,8 +114,8 @@ const ACTOR_LABEL: Record<CampaignEventActor, string> = {
   cron: "Scheduler",
 };
 
-export function eventMeta(type: CampaignEventType) {
-  return EVENT_META[type] ?? FALLBACK_META;
+export function eventMeta(type: CampaignEventType | string) {
+  return EVENT_META[type as CampaignEventType] ?? FALLBACK_META;
 }
 
 /** Relative "time ago" from an ISO timestamp (server-rendered, deterministic). */

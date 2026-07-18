@@ -505,7 +505,12 @@ export default async function MerchantDashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
           {/* Recent Activity Timeline */}
           <div className="lg:col-span-6 bg-white rounded-3xl border border-neutral-200/80 shadow-sm p-6 space-y-6">
-            <h3 className="font-black text-neutral-900 text-sm">Recent Activity</h3>
+            <div className="flex items-center justify-between">
+              <h3 className="font-black text-neutral-900 text-sm">Recent Activity</h3>
+              <Link href="/m/activity" className="text-[10px] font-bold text-emerald-600 hover:text-emerald-700">
+                View all
+              </Link>
+            </div>
             {recent.length === 0 ? (
               <p className="text-xs text-neutral-400 font-medium py-4">
                 No activity yet. Events appear here as your campaigns run.

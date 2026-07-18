@@ -162,6 +162,29 @@ export class TenantRepository {
     if (error) throw new Error(`rpc(${fn}) failed: ${error.message}`);
   }
 
+  /**
+   * Call a row-returning SECURITY DEFINER RPC and return the rows typed. Used
+   * by the Enterprise API repository layer so domain repositories never touch
+   * the raw client. Callers MUST still pass the tenant's business_id in `args`
+   * (the RPC enforces tenant scoping server-side).
+   */
+  async rpcSelect<T>(fn: string, args: Record<string, unknown>): Promise<T[]> {
+    const { data, error } = await this.supabase.rpc(fn, args);
+    if (error) throw new Error(`rpc(${fn}) failed: ${error.message}`);
+    if (data == null) return [];
+    return (Array.isArray(data) ? data : [data]) as T[];
+  }
+
+  /**
+   * Call an RPC that returns a single scalar or JSON object (returns null when
+   * the RPC yields no row). Thin wrapper over the scoped service-role client.
+   */
+  async rpcScalar<T>(fn: string, args: Record<string, unknown>): Promise<T | null> {
+    const { data, error } = await this.supabase.rpc(fn, args);
+    if (error) throw new Error(`rpc(${fn}) failed: ${error.message}`);
+    return (data as T | null) ?? null;
+  }
+
   // ---------- Aggregate stats ----------
 
   /**

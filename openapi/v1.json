@@ -1,0 +1,462 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EngageOS Enterprise API",
+    "version": "1.0.0",
+    "description": "Domain-driven multi-tenant API for EngageOS. Every response uses the standard envelope; business_id is always derived from the authenticated principal and never accepted from the client. Implemented endpoints: customers, events, and the Shopify webhook. Remaining modules are scaffolded and return 501 not_implemented."
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "tags": [
+    { "name": "Customers" },
+    { "name": "Events" },
+    { "name": "Shopify" }
+  ],
+  "paths": {
+    "/customers": {
+      "get": {
+        "tags": ["Customers"],
+        "summary": "List customers (keyset-paginated)",
+        "parameters": [
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Search" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/CustomerPage" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Customers"],
+        "summary": "Upsert a customer by phone",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpsertCustomer" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/CustomerObject" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/customers/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/CustomerId" }],
+      "get": {
+        "tags": ["Customers"],
+        "summary": "Get a customer",
+        "responses": {
+          "200": { "$ref": "#/components/responses/CustomerObject" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "delete": {
+        "tags": ["Customers"],
+        "summary": "Soft-delete a customer",
+        "responses": {
+          "204": { "description": "Deleted" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/customers/{id}/360": {
+      "parameters": [{ "$ref": "#/components/parameters/CustomerId" }],
+      "get": {
+        "tags": ["Customers"],
+        "summary": "Customer 360 profile",
+        "responses": {
+          "200": { "$ref": "#/components/responses/CustomerObject" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/customers/{id}/consent": {
+      "parameters": [{ "$ref": "#/components/parameters/CustomerId" }],
+      "post": {
+        "tags": ["Customers"],
+        "summary": "Set channel consent",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SetConsent" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/CustomerObject" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/customers/{id}/tags": {
+      "parameters": [{ "$ref": "#/components/parameters/CustomerId" }],
+      "post": {
+        "tags": ["Customers"],
+        "summary": "Add a tag",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AddTag" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/CustomerObject" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/customers/{id}/timeline": {
+      "parameters": [{ "$ref": "#/components/parameters/CustomerId" }],
+      "get": {
+        "tags": ["Customers"],
+        "summary": "Customer timeline (keyset-paginated)",
+        "parameters": [
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/TimelinePage" },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/customers/merge": {
+      "post": {
+        "tags": ["Customers"],
+        "summary": "Merge a duplicate into a survivor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/MergeCustomers" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/CustomerObject" },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "tags": ["Events"],
+        "summary": "Event feed (keyset-paginated)",
+        "parameters": [
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/EventCategory" }
+          },
+          { "name": "name", "in": "query", "schema": { "type": "string" } },
+          { "name": "customerId", "in": "query", "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/EventPage" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Events"],
+        "summary": "Record a universal event",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RecordEvent" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/EventObject" },
+          "422": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/webhooks/shopify": {
+      "servers": [{ "url": "/api" }],
+      "post": {
+        "tags": ["Shopify"],
+        "summary": "Inbound Shopify webhook (HMAC-authenticated, idempotent)",
+        "description": "Authenticated by X-Shopify-Hmac-Sha256 over the raw body; tenant resolved from X-Shopify-Shop-Domain. Always 200-ACKs a verified request and processes asynchronously. Not part of the cookie-authenticated v1 surface.",
+        "parameters": [
+          { "name": "X-Shopify-Hmac-Sha256", "in": "header", "required": true, "schema": { "type": "string" } },
+          { "name": "X-Shopify-Shop-Domain", "in": "header", "required": true, "schema": { "type": "string" } },
+          { "name": "X-Shopify-Topic", "in": "header", "required": true, "schema": { "type": "string" } },
+          { "name": "X-Shopify-Webhook-Id", "in": "header", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        },
+        "responses": {
+          "200": { "description": "Acknowledged (verified; processed asynchronously)" },
+          "401": { "description": "Unknown shop or invalid signature" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "cookieSession": { "type": "apiKey", "in": "cookie", "name": "merchant_session" }
+    },
+    "parameters": {
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "schema": { "type": "string" },
+        "description": "Opaque keyset cursor from a prior page's nextCursor."
+      },
+      "Search": { "name": "q", "in": "query", "schema": { "type": "string" } },
+      "CustomerId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string", "format": "uuid" }
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Standard error envelope",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "CustomerObject": {
+        "description": "A customer",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                { "$ref": "#/components/schemas/SuccessEnvelope" },
+                { "properties": { "data": { "$ref": "#/components/schemas/Customer" } } }
+              ]
+            }
+          }
+        }
+      },
+      "CustomerPage": {
+        "description": "A page of customers",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                { "$ref": "#/components/schemas/PageEnvelope" },
+                { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Customer" } } } }
+              ]
+            }
+          }
+        }
+      },
+      "TimelinePage": {
+        "description": "A page of timeline entries",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                { "$ref": "#/components/schemas/PageEnvelope" },
+                { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/TimelineEntry" } } } }
+              ]
+            }
+          }
+        }
+      },
+      "EventObject": {
+        "description": "A recorded event",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                { "$ref": "#/components/schemas/SuccessEnvelope" },
+                { "properties": { "data": { "$ref": "#/components/schemas/Event" } } }
+              ]
+            }
+          }
+        }
+      },
+      "EventPage": {
+        "description": "A page of events",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                { "$ref": "#/components/schemas/PageEnvelope" },
+                { "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } } } }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ResponseMeta": {
+        "type": "object",
+        "required": ["correlationId", "timestamp", "version"],
+        "properties": {
+          "correlationId": { "type": "string" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "version": { "type": "string", "example": "v1" }
+        }
+      },
+      "PageInfo": {
+        "type": "object",
+        "required": ["nextCursor", "hasMore", "limit"],
+        "properties": {
+          "nextCursor": { "type": ["string", "null"] },
+          "hasMore": { "type": "boolean" },
+          "limit": { "type": "integer" }
+        }
+      },
+      "SuccessEnvelope": {
+        "type": "object",
+        "required": ["ok", "data", "meta"],
+        "properties": {
+          "ok": { "const": true },
+          "data": {},
+          "meta": { "$ref": "#/components/schemas/ResponseMeta" }
+        }
+      },
+      "PageEnvelope": {
+        "type": "object",
+        "required": ["ok", "data", "page", "meta"],
+        "properties": {
+          "ok": { "const": true },
+          "data": { "type": "array", "items": {} },
+          "page": { "$ref": "#/components/schemas/PageInfo" },
+          "meta": { "$ref": "#/components/schemas/ResponseMeta" }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["ok", "error", "meta"],
+        "properties": {
+          "ok": { "const": false },
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "validation_error",
+                  "unauthorized",
+                  "forbidden",
+                  "not_found",
+                  "conflict",
+                  "rate_limited",
+                  "not_implemented",
+                  "server_error"
+                ]
+              },
+              "message": { "type": "string" },
+              "details": {}
+            }
+          },
+          "meta": { "$ref": "#/components/schemas/ResponseMeta" }
+        }
+      },
+      "Consents": {
+        "type": "object",
+        "properties": {
+          "marketing": { "type": "boolean" },
+          "email": { "type": "boolean" },
+          "sms": { "type": "boolean" },
+          "whatsappOptOut": { "type": "boolean" }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": ["string", "null"] },
+          "phone": { "type": "string" },
+          "email": { "type": ["string", "null"] },
+          "consents": { "$ref": "#/components/schemas/Consents" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TimelineEntry": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "name": { "type": "string" },
+          "occurredAt": { "type": "string", "format": "date-time" },
+          "metadata": { "type": "object" }
+        }
+      },
+      "EventCategory": {
+        "type": "string",
+        "enum": ["commerce", "loyalty", "campaign", "communication", "profile", "marketing", "system", "ai"]
+      },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "category": { "$ref": "#/components/schemas/EventCategory" },
+          "customerId": { "type": ["string", "null"], "format": "uuid" },
+          "occurredAt": { "type": "string", "format": "date-time" },
+          "metadata": { "type": "object" }
+        }
+      },
+      "UpsertCustomer": {
+        "type": "object",
+        "required": ["phone"],
+        "properties": {
+          "phone": { "type": "string", "description": "E.164 (+91 Indian mobile)" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" }
+        }
+      },
+      "SetConsent": {
+        "type": "object",
+        "required": ["channel", "status"],
+        "properties": {
+          "channel": { "type": "string", "enum": ["whatsapp", "email", "sms", "push"] },
+          "status": { "type": "string", "enum": ["granted", "revoked"] }
+        }
+      },
+      "AddTag": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+        }
+      },
+      "MergeCustomers": {
+        "type": "object",
+        "required": ["survivorId", "duplicateId"],
+        "properties": {
+          "survivorId": { "type": "string", "format": "uuid" },
+          "duplicateId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "RecordEvent": {
+        "type": "object",
+        "required": ["name", "category"],
+        "properties": {
+          "name": { "type": "string", "description": "Dotted verb, e.g. order.placed" },
+          "category": { "$ref": "#/components/schemas/EventCategory" },
+          "customerId": { "type": "string", "format": "uuid" },
+          "dedupKey": { "type": "string" },
+          "metadata": { "type": "object" }
+        }
+      }
+    }
+  },
+  "security": [{ "cookieSession": [] }]
+}
