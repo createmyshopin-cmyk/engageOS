@@ -15,6 +15,7 @@ describe("shopify overview DTO", () => {
     shop_domain: "acme.myshopify.com",
     status: "active",
     installed_at: "2026-06-01T00:00:00Z",
+    scopes: "read_orders,read_products,write_discounts",
   };
 
   it("maps an active store to connected=true with rounded revenue", () => {
@@ -30,6 +31,7 @@ describe("shopify overview DTO", () => {
       domain: "acme.myshopify.com",
       status: "active",
       installedAt: "2026-06-01T00:00:00Z",
+      scopes: "read_orders,read_products,write_discounts",
     });
     expect(dto.totals).toEqual({ orders: 12, products: 40, revenue: 2000 });
     expect(dto.lastOrderAt).toBe("2026-07-10T00:00:00Z");

@@ -25,4 +25,16 @@ export class ShopifyReadController extends Controller {
     const data = await this.service.overview();
     return ok(data, { correlationId: this.ctx.correlationId, version: this.ctx.version });
   }
+
+  async scopes(): Promise<NextResponse> {
+    requireScope(this.principal(), "read");
+    const data = await this.service.scopes();
+    return ok(data, { correlationId: this.ctx.correlationId, version: this.ctx.version });
+  }
+
+  async couponDrops(): Promise<NextResponse> {
+    requireScope(this.principal(), "read");
+    const data = await this.service.couponDrops();
+    return ok({ campaigns: data }, { correlationId: this.ctx.correlationId, version: this.ctx.version });
+  }
 }

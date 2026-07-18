@@ -11,6 +11,8 @@ import type {
   CampaignEventType,
   CampaignPerformanceRow,
   CampaignTimelineEvent,
+  CouponDropOverviewRow,
+  CouponDropSampleCode,
   CouponDropStats,
   MerchantRole,
   MerchantSessionPayload,
@@ -293,8 +295,50 @@ export class TenantRepository {
     };
   }
 
+  /** Per-campaign Coupon Drop pool overview for the merchant Shopify view. */
+  async couponDropOverview(): Promise<CouponDropOverviewRow[]> {
+    const { data, error } = await this.supabase.rpc("coupon_drop_campaign_overview", {
+      p_business_id: this.businessId,
+    });
+    if (error) throw new Error(`couponDropOverview failed: ${error.message}`);
+    return ((data ?? []) as any[]).map((row) => ({
+      campaign_id: String(row.campaign_id),
+      campaign_name: (row.campaign_name as string) ?? "",
+      campaign_status: (row.campaign_status as string) ?? "draft",
+      pool_status: (row.pool_status as string) ?? "pending",
+      pool_last_error: (row.pool_last_error as string) ?? null,
+      shopify_parent_discount_id: (row.shopify_parent_discount_id as string) ?? null,
+      currency: (row.currency as string) || "INR",
+      codes_minted: Number(row.codes_minted) || 0,
+      codes_available: Number(row.codes_available) || 0,
+      codes_claimed: Number(row.codes_claimed) || 0,
+      codes_redeemed: Number(row.codes_redeemed) || 0,
+    }));
+  }
+
+  /** A few recent pool codes for one campaign (merchant inspection). */
+  async couponDropSampleCodes(
+    campaignId: string,
+    limit = 5
+  ): Promise<CouponDropSampleCode[]> {
+    const { data, error } = await this.supabase.rpc("coupon_drop_sample_codes", {
+      p_business_id: this.businessId,
+      p_campaign_id: campaignId,
+      p_limit: limit,
+    });
+    if (error) throw new Error(`couponDropSampleCodes failed: ${error.message}`);
+    return ((data ?? []) as any[]).map((row) => ({
+      code: (row.code as string) ?? "",
+      status: (row.status as string) ?? "available",
+      shopify_redeem_code_id: (row.shopify_redeem_code_id as string) ?? null,
+      claimed_at: (row.claimed_at as string) ?? null,
+      created_at: (row.created_at as string) ?? "",
+    }));
+  }
+
   /** Business-wide totals from the immutable event log (dashboard KPIs). */
-  async businessEventTotals(): Promise<{    customers: number;
+  async businessEventTotals(): Promise<{
+    customers: number;
     plays: number;
     wins: number;
     losses: number;

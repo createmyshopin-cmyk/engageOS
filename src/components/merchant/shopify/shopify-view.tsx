@@ -27,36 +27,37 @@ import {
   AlertTriangle,
   RefreshCw,
   CheckCircle2,
+  XCircle,
   Loader2,
   ArrowRight,
   X,
   KeyRound,
   ExternalLink,
   Unplug,
+  Ticket,
+  Copy,
+  Check,
+  ChevronDown,
+  ShieldCheck,
 } from "lucide-react";
 import {
   useShopifyOverview,
+  useShopifyScopes,
+  useCouponDrops,
   useConnectShopify,
   useDisconnectShopify,
 } from "@/lib/api/hooks/use-shopify";
+import { REQUIRED_SHOPIFY_SCOPES, parseScopes } from "@/lib/shopify/scopes";
+import type { ShopifyCouponDropDTO } from "@/lib/api/types";
 import { ShopifySyncPanel } from "./shopify-sync-panel";
 
 /**
- * The Admin API scopes EngageOS needs. Mostly read-only for the sync engine (one
- * per resource it pulls); `write_discounts` is the sole write scope, required so
- * Coupon Drop campaigns can mint unique discount codes. Shown in the connect
- * instructions so the merchant enables precisely these in their Dev Dashboard app.
+ * The Admin API scopes EngageOS needs — shared source of truth in
+ * `@/lib/shopify/scopes`. Mostly read-only for the sync engine; `write_discounts`
+ * is the sole write scope, required so Coupon Drop campaigns can mint unique
+ * discount codes.
  */
-const REQUIRED_SCOPES: Array<{ handle: string; for: string }> = [
-  { handle: "read_products", for: "Products" },
-  { handle: "read_orders", for: "Orders" },
-  { handle: "read_customers", for: "Customers" },
-  { handle: "read_inventory", for: "Inventory levels" },
-  { handle: "read_locations", for: "Store locations (inventory)" },
-  { handle: "read_price_rules", for: "Discounts / price rules" },
-  { handle: "read_discounts", for: "Discount codes" },
-  { handle: "write_discounts", for: "Coupon Drop discount codes" },
-];
+const REQUIRED_SCOPES = REQUIRED_SHOPIFY_SCOPES;
 
 function formatMoney(n: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -179,6 +180,12 @@ export function ShopifyView() {
                 />
               </div>
 
+              {/* Granted permissions (live from Shopify) */}
+              <ScopesCard />
+
+              {/* Coupon Drop generated codes */}
+              <CouponDropsCard />
+
               {/* Operational sync engine dashboard */}
               <ShopifySyncPanel />
             </>
@@ -191,10 +198,285 @@ export function ShopifyView() {
   );
 }
 
+/* ──────────────────────────────────────────────────────────
+   GRANTED PERMISSIONS (live scopes)
+────────────────────────────────────────────────────────── */
+function ScopesCard() {
+  const { data, isLoading, isError } = useShopifyScopes();
+  const granted = parseScopes((data?.granted ?? []).join(","));
+  const missingWrite = !isLoading && !isError && !granted.has("write_discounts");
+
+  return (
+    <section className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm p-5">
+      <div className="flex items-center gap-2.5">
+        <div className="flex items-center justify-center size-9 rounded-xl bg-indigo-50 text-indigo-600">
+          <ShieldCheck className="size-4.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-black text-neutral-900">Granted permissions</p>
+          <p className="text-[11px] font-semibold text-neutral-500">
+            {isLoading
+              ? "Reading permissions from Shopify…"
+              : data?.live
+                ? "Live from your store's Admin API access scopes."
+                : "Recorded when you connected (live check unavailable)."}
+          </p>
+        </div>
+      </div>
+
+      {isError ? (
+        <p className="mt-4 text-[11px] font-bold text-red-600">
+          Couldn&apos;t read permissions. Try refreshing.
+        </p>
+      ) : (
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {REQUIRED_SCOPES.map((s) => {
+            const has = granted.has(s.handle);
+            return (
+              <div
+                key={s.handle}
+                className={`flex items-center gap-2.5 rounded-xl border px-3 py-2 ${
+                  has ? "border-emerald-100 bg-emerald-50/50" : "border-red-100 bg-red-50/50"
+                }`}
+              >
+                {isLoading ? (
+                  <Loader2 className="size-4 shrink-0 animate-spin text-neutral-300" />
+                ) : has ? (
+                  <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+                ) : (
+                  <XCircle className="size-4 shrink-0 text-red-500" />
+                )}
+                <div className="min-w-0">
+                  <code className="text-[11px] font-black text-neutral-800">{s.handle}</code>
+                  <p className="text-[10px] font-semibold text-neutral-500 truncate">
+                    {s.for}
+                    {s.write ? " · write" : ""}
+                  </p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {missingWrite && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <AlertTriangle className="size-4 shrink-0 mt-0.5 text-amber-500" />
+          <p className="text-[11px] font-bold text-amber-700">
+            <code className="font-black">write_discounts</code> is not granted, so Coupon
+            Drop campaigns can&apos;t mint Shopify codes. Add it to your Dev Dashboard
+            app&apos;s Admin API scopes, then reconnect the store to enable Coupon Drop.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ──────────────────────────────────────────────────────────
+   COUPON DROP GENERATED CODES
+────────────────────────────────────────────────────────── */
+function CouponDropsCard() {
+  const { data, isLoading, isError, refetch } = useCouponDrops();
+  const campaigns = data?.campaigns ?? [];
+
+  return (
+    <section className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm p-5">
+      <div className="flex items-center gap-2.5">
+        <div className="flex items-center justify-center size-9 rounded-xl bg-rose-50 text-rose-600">
+          <Ticket className="size-4.5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-black text-neutral-900">Coupon Drop codes</p>
+          <p className="text-[11px] font-semibold text-neutral-500">
+            Unique Shopify discount codes minted for your Coupon Drop campaigns.
+          </p>
+        </div>
+        {!isLoading && (
+          <button
+            onClick={() => refetch()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-bold text-neutral-600 hover:bg-neutral-50 transition cursor-pointer"
+          >
+            <RefreshCw className="size-3.5" /> Refresh
+          </button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="mt-4 space-y-2">
+          {[0, 1].map((i) => (
+            <div key={i} className="h-20 rounded-2xl bg-neutral-100 animate-pulse" />
+          ))}
+        </div>
+      ) : isError ? (
+        <p className="mt-4 text-[11px] font-bold text-red-600">
+          Couldn&apos;t load Coupon Drop data.
+        </p>
+      ) : campaigns.length === 0 ? (
+        <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 py-8 text-center">
+          <p className="text-xs font-bold text-neutral-500">No Coupon Drop campaigns yet.</p>
+          <p className="text-[11px] font-semibold text-neutral-400 mt-1">
+            Create a Coupon Drop campaign to auto-generate Shopify discount codes.
+          </p>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          {campaigns.map((c) => (
+            <CouponDropRow key={c.campaign_id} campaign={c} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+const POOL_STATUS_STYLE: Record<string, { label: string; class: string }> = {
+  pending: { label: "Pending", class: "bg-neutral-100 text-neutral-600" },
+  minting: { label: "Minting…", class: "bg-blue-50 text-blue-700" },
+  ready: { label: "Ready", class: "bg-emerald-50 text-emerald-700" },
+  error: { label: "Error", class: "bg-red-50 text-red-700" },
+};
+
+function CouponDropRow({ campaign }: { campaign: ShopifyCouponDropDTO }) {
+  const [open, setOpen] = useState(false);
+  const status = POOL_STATUS_STYLE[campaign.pool_status] ?? POOL_STATUS_STYLE.pending;
+
+  return (
+    <div className="rounded-2xl border border-neutral-200 p-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-black text-neutral-900 truncate">{campaign.campaign_name}</p>
+          <div className="mt-1 flex items-center gap-2">
+            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${status.class}`}>
+              {status.label}
+            </span>
+            <span className="text-[10px] font-semibold text-neutral-400 capitalize">
+              {campaign.campaign_status}
+            </span>
+          </div>
+        </div>
+        {campaign.codes_minted > 0 && (
+          <button
+            onClick={() => setOpen((v) => !v)}
+            className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-bold text-neutral-600 hover:bg-neutral-50 transition cursor-pointer shrink-0"
+          >
+            Sample codes
+            <ChevronDown className={`size-3.5 transition ${open ? "rotate-180" : ""}`} />
+          </button>
+        )}
+      </div>
+
+      {campaign.pool_status === "error" && campaign.pool_last_error && (
+        <p className="mt-2 flex items-start gap-1.5 text-[10px] font-bold text-red-600">
+          <AlertTriangle className="size-3.5 shrink-0 mt-px" />
+          {campaign.pool_last_error}
+        </p>
+      )}
+
+      <div className="mt-3 grid grid-cols-4 gap-2">
+        <PoolStat label="Minted" value={campaign.codes_minted} />
+        <PoolStat label="Available" value={campaign.codes_available} />
+        <PoolStat label="Claimed" value={campaign.codes_claimed} />
+        <PoolStat label="Redeemed" value={campaign.codes_redeemed} highlight />
+      </div>
+
+      {campaign.shopify_parent_discount_id && (
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-neutral-400">
+            Parent discount
+          </span>
+          <CopyableId value={campaign.shopify_parent_discount_id} />
+        </div>
+      )}
+
+      {open && (
+        <div className="mt-3 border-t border-neutral-100 pt-3">
+          {campaign.sample_codes.length === 0 ? (
+            <p className="text-[11px] font-semibold text-neutral-400">No codes to show.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {campaign.sample_codes.map((s) => (
+                <div
+                  key={s.code}
+                  className="flex items-center gap-2 rounded-lg bg-neutral-50 px-2.5 py-1.5"
+                >
+                  <code className="text-[11px] font-black text-neutral-800">{s.code}</code>
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                      s.status === "available"
+                        ? "bg-emerald-100 text-emerald-700"
+                        : s.status === "claimed"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-neutral-200 text-neutral-600"
+                    }`}
+                  >
+                    {s.status}
+                  </span>
+                  {s.shopify_redeem_code_id && (
+                    <span className="ml-auto truncate text-[10px] font-semibold text-neutral-400">
+                      {s.shopify_redeem_code_id}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PoolStat({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: number;
+  highlight?: boolean;
+}) {
+  return (
+    <div className="rounded-xl bg-neutral-50 p-2">
+      <p className="text-[9px] font-bold uppercase tracking-wide text-neutral-400">{label}</p>
+      <p className={`text-sm font-black ${highlight ? "text-emerald-600" : "text-neutral-900"}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function CopyableId({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    if (typeof navigator === "undefined") return;
+    navigator.clipboard
+      .writeText(value)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  }
+  return (
+    <button
+      onClick={copy}
+      title={value}
+      className="inline-flex items-center gap-1.5 rounded-md bg-neutral-100 px-2 py-1 text-[10px] font-bold text-neutral-600 hover:bg-neutral-200 transition cursor-pointer max-w-full"
+    >
+      <span className="truncate">{value}</span>
+      {copied ? (
+        <Check className="size-3 shrink-0 text-emerald-600" />
+      ) : (
+        <Copy className="size-3 shrink-0" />
+      )}
+    </button>
+  );
+}
+
 function ConnectForm() {
   const connect = useConnectShopify();
-  const [shopDomain, setShopDomain] = useState("");
-  const [clientId, setClientId] = useState("");
+  const [shopDomain, setShopDomain] = useState("");  const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
 
   const canSubmit =
@@ -333,8 +615,9 @@ function ConnectForm() {
             ))}
           </div>
           <p className="mt-2 text-[10px] font-medium text-neutral-400 leading-relaxed">
-            Read-only — EngageOS never writes to your store. Missing a scope only
-            skips that resource; the rest still sync.
+            All read-only except <code className="font-bold text-neutral-500">write_discounts</code>,
+            which lets Coupon Drop campaigns mint unique codes in your store. Missing
+            a scope only skips that resource; the rest still sync.
           </p>
         </div>
 

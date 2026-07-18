@@ -53,6 +53,24 @@ const BULK_ADD_MUTATION = `
   }
 `;
 
+const BULK_CREATION_QUERY = `
+  query couponDropBulkStatus($id: ID!, $first: Int!, $after: String) {
+    discountRedeemCodeBulkCreation(id: $id) {
+      done
+      codesCount
+      failedCount
+      codes(first: $first, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          code
+          errors { code message }
+          discountRedeemCode { id }
+        }
+      }
+    }
+  }
+`;
+
 /**
  * Create the parent discount (the rule). A single placeholder code is required
  * by the API; the real per-customer codes are bulk-added afterward and this
@@ -118,15 +136,17 @@ export async function createParentDiscount(
 
 /**
  * Bulk-attach unique redeem codes to a parent discount. Shopify accepts up to
- * 100 codes per bulk call, so callers should chunk. Returns nothing on success;
- * throws ShopifyDiscountError on userErrors.
+ * 100 codes per bulk call, so callers should chunk. Returns the async
+ * `bulkCreation` job id (poll it with pollBulkCreation to confirm codes were
+ * actually created and to capture per-code Shopify ids); returns null on an
+ * empty input. Throws ShopifyDiscountError on userErrors.
  */
 export async function bulkAddCodes(
   client: ShopifyClient,
   parentGid: string,
   codes: string[]
-): Promise<void> {
-  if (codes.length === 0) return;
+): Promise<string | null> {
+  if (codes.length === 0) return null;
   const data = await client.graphql<{
     discountRedeemCodeBulkAdd?: {
       bulkCreation?: { id?: string } | null;
@@ -143,6 +163,93 @@ export async function bulkAddCodes(
       errors.map((e) => e.message ?? "unknown").join("; ")
     );
   }
+  return data.discountRedeemCodeBulkAdd?.bulkCreation?.id ?? null;
+}
+
+/** A code confirmed created in Shopify, with its per-code redeem-code GID. */
+export interface ConfirmedCode {
+  code: string;
+  redeemId: string | null;
+}
+
+export interface BulkCreationResult {
+  done: boolean;
+  failedCount: number;
+  codes: ConfirmedCode[];
+}
+
+/**
+ * Poll a discountRedeemCodeBulkAdd job until it reports done (bounded retries).
+ * Returns the codes Shopify actually created (paginated) with their redeem-code
+ * ids, plus the job's done/failed status. Codes that errored are omitted from
+ * `codes`, so callers persist ONLY confirmed codes. Never throws on an
+ * incomplete job — it returns done=false and whatever codes are available so
+ * the caller can persist the confirmed subset and let top-up refill the rest.
+ */
+export async function pollBulkCreation(
+  client: ShopifyClient,
+  bulkCreationId: string,
+  opts: { maxPolls?: number; delayMs?: number; pageSize?: number } = {}
+): Promise<BulkCreationResult> {
+  const maxPolls = opts.maxPolls ?? 10;
+  const delayMs = opts.delayMs ?? 1500;
+  const pageSize = opts.pageSize ?? 100;
+
+  let done = false;
+  let failedCount = 0;
+
+  for (let attempt = 0; attempt < maxPolls; attempt++) {
+    const data = await client.graphql<{
+      discountRedeemCodeBulkCreation?: {
+        done?: boolean;
+        failedCount?: number;
+      } | null;
+    }>(BULK_CREATION_QUERY, { id: bulkCreationId, first: 1, after: null });
+
+    const node = data.discountRedeemCodeBulkCreation;
+    done = node?.done === true;
+    failedCount = Number(node?.failedCount ?? 0);
+    if (done) break;
+    await sleep(delayMs);
+  }
+
+  // Collect confirmed codes (paginate the codes connection).
+  const codes: ConfirmedCode[] = [];
+  let after: string | null = null;
+  do {
+    const data: {
+      discountRedeemCodeBulkCreation?: {
+        codes?: {
+          pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+          nodes?: Array<{
+            code?: string;
+            errors?: Array<{ code?: string; message?: string }>;
+            discountRedeemCode?: { id?: string } | null;
+          }>;
+        };
+      } | null;
+    } = await client.graphql(BULK_CREATION_QUERY, {
+      id: bulkCreationId,
+      first: pageSize,
+      after,
+    });
+
+    const conn = data.discountRedeemCodeBulkCreation?.codes;
+    for (const n of conn?.nodes ?? []) {
+      const hasError = (n.errors?.length ?? 0) > 0;
+      const code = n.code?.trim();
+      if (!code || hasError) continue;
+      codes.push({ code, redeemId: n.discountRedeemCode?.id ?? null });
+    }
+    after = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor ?? null : null;
+  } while (after);
+
+  return { done, failedCount, codes };
+}
+
+/** Promise-based delay (app runtime; not a workflow script). */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Split an array into chunks of at most `size`. */

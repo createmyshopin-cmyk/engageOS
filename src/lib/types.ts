@@ -297,6 +297,30 @@ export interface CouponDropStats {
   currency: string;
 }
 
+/** One coupon_drop campaign's pool summary (from coupon_drop_campaign_overview). */
+export interface CouponDropOverviewRow {
+  campaign_id: string;
+  campaign_name: string;
+  campaign_status: string;
+  pool_status: string;
+  pool_last_error: string | null;
+  shopify_parent_discount_id: string | null;
+  currency: string;
+  codes_minted: number;
+  codes_available: number;
+  codes_claimed: number;
+  codes_redeemed: number;
+}
+
+/** A sample pool code for merchant inspection (from coupon_drop_sample_codes). */
+export interface CouponDropSampleCode {
+  code: string;
+  status: string;
+  shopify_redeem_code_id: string | null;
+  claimed_at: string | null;
+  created_at: string;
+}
+
 export interface CustomerTimelineEvent {
   id: string;
   event_type: CustomerEventType;

@@ -14,6 +14,7 @@ export interface ShopifyOverviewDTO {
     domain: string;
     status: string;
     installedAt: string | null;
+    scopes: string | null;
   } | null;
   totals: {
     orders: number;
@@ -28,6 +29,7 @@ export interface ShopifyShopRow {
   shop_domain: string;
   status: string;
   installed_at: string | null;
+  scopes: string | null;
 }
 
 export function toShopifyOverviewDTO(input: {
@@ -44,6 +46,7 @@ export function toShopifyOverviewDTO(input: {
           domain: input.shop.shop_domain,
           status: input.shop.status,
           installedAt: input.shop.installed_at,
+          scopes: input.shop.scopes ?? null,
         }
       : null,
     totals: {

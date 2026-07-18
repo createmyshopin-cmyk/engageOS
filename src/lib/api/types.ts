@@ -186,6 +186,7 @@ export interface ShopifyOverviewDTO {
     domain: string;
     status: string;
     installedAt: string | null;
+    scopes: string | null;
   } | null;
   totals: {
     orders: number;
@@ -193,6 +194,39 @@ export interface ShopifyOverviewDTO {
     revenue: number;
   };
   lastOrderAt: string | null;
+}
+
+/** Live granted Admin API scopes (mirror of /api/v1/shopify/scopes). */
+export interface ShopifyScopesDTO {
+  granted: string[];
+  /** True when read live from Shopify; false when falling back to stored scopes. */
+  live: boolean;
+}
+
+/** One coupon_drop campaign's pool summary + sample codes (/shopify/coupon-drops). */
+export interface ShopifyCouponDropDTO {
+  campaign_id: string;
+  campaign_name: string;
+  campaign_status: string;
+  pool_status: string;
+  pool_last_error: string | null;
+  shopify_parent_discount_id: string | null;
+  currency: string;
+  codes_minted: number;
+  codes_available: number;
+  codes_claimed: number;
+  codes_redeemed: number;
+  sample_codes: Array<{
+    code: string;
+    status: string;
+    shopify_redeem_code_id: string | null;
+    claimed_at: string | null;
+    created_at: string;
+  }>;
+}
+
+export interface ShopifyCouponDropsDTO {
+  campaigns: ShopifyCouponDropDTO[];
 }
 
 // ── Shopify sync DTOs (mirror of src/server/modules/shopify/sync/dto.ts) ──

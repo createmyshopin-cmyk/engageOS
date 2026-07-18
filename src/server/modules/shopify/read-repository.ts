@@ -2,6 +2,7 @@ import "server-only";
 import { Repository } from "@/server/core/Repository";
 import type { TenantRepository } from "@/lib/db/tenant-repository";
 import type { ShopifyShopRow } from "@/server/modules/shopify/dto";
+import type { CouponDropOverviewRow } from "@/lib/types";
 
 /**
  * ShopifyReadRepository — tenant-scoped reads for the merchant Shopify overview.
@@ -19,10 +20,20 @@ export class ShopifyReadRepository extends Repository {
   /** The connected store row (display-safe columns only), or null. */
   async shop(): Promise<ShopifyShopRow | null> {
     const { data, error } = await this.tenant
-      .select("shopify_shops", "shop_domain, status, installed_at")
+      .select("shopify_shops", "shop_domain, status, installed_at, scopes")
       .maybeSingle();
     if (error) throw new Error(`shopify.shop failed: ${error.message}`);
     return (data as unknown as ShopifyShopRow | null) ?? null;
+  }
+
+  /** Per-campaign Coupon Drop pool overview (tenant-scoped). */
+  async couponDropOverview(): Promise<CouponDropOverviewRow[]> {
+    return this.tenant.couponDropOverview();
+  }
+
+  /** A few recent pool codes for one campaign (tenant-scoped). */
+  async couponDropSampleCodes(campaignId: string, limit: number) {
+    return this.tenant.couponDropSampleCodes(campaignId, limit);
   }
 
   /** Total ingested order count for the tenant. */

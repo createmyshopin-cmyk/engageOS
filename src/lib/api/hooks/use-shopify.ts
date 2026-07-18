@@ -27,6 +27,8 @@ import {
 import { apiClient, type ApiResult } from "@/lib/api/client";
 import type {
   ShopifyOverviewDTO,
+  ShopifyScopesDTO,
+  ShopifyCouponDropsDTO,
   ShopifyConnectionHealthDTO,
   ShopifySyncOverviewDTO,
   ShopifySyncJobDTO,
@@ -36,6 +38,8 @@ import type {
 export const shopifyKeys = {
   all: ["shopify"] as const,
   overview: () => [...shopifyKeys.all, "overview"] as const,
+  scopes: () => [...shopifyKeys.all, "scopes"] as const,
+  couponDrops: () => [...shopifyKeys.all, "coupon-drops"] as const,
   sync: () => [...shopifyKeys.all, "sync"] as const,
   syncHealth: () => [...shopifyKeys.all, "sync", "health"] as const,
   syncJobs: (limit: number) => [...shopifyKeys.all, "sync", "jobs", limit] as const,
@@ -48,6 +52,28 @@ export function useShopifyOverview() {
     queryFn: ({ signal }) =>
       apiClient.get<ShopifyOverviewDTO>("/api/v1/shopify/overview", signal),
     select: (r: ApiResult<ShopifyOverviewDTO>) => r.data,
+  });
+}
+
+/** Live granted Admin API scopes for the connected store (granted/missing UI). */
+export function useShopifyScopes(enabled = true) {
+  return useQuery({
+    queryKey: shopifyKeys.scopes(),
+    queryFn: ({ signal }) =>
+      apiClient.get<ShopifyScopesDTO>("/api/v1/shopify/scopes", signal),
+    select: (r: ApiResult<ShopifyScopesDTO>) => r.data,
+    enabled,
+  });
+}
+
+/** Per-campaign Coupon Drop pool overview + sample codes. */
+export function useCouponDrops(enabled = true) {
+  return useQuery({
+    queryKey: shopifyKeys.couponDrops(),
+    queryFn: ({ signal }) =>
+      apiClient.get<ShopifyCouponDropsDTO>("/api/v1/shopify/coupon-drops", signal),
+    select: (r: ApiResult<ShopifyCouponDropsDTO>) => r.data,
+    enabled,
   });
 }
 

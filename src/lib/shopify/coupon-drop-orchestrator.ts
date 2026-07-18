@@ -6,6 +6,7 @@ import {
   chunk,
   createParentDiscount,
   generatePoolCodes,
+  pollBulkCreation,
   ShopifyDiscountError,
   type DiscountConfig,
 } from "@/lib/shopify/discounts";
@@ -125,6 +126,12 @@ function toDiscountConfig(cfg: CouponConfigRow): DiscountConfig {
 /**
  * Mint (or extend) the pool for a campaign to reach `pool_target`. `parentGid`
  * is the parent discount to attach codes to. Returns the number of codes added.
+ *
+ * Each chunk is bulk-added to Shopify, then the async job is POLLED so we persist
+ * ONLY codes Shopify confirmed created — capturing each code's redeem-code GID
+ * (shopify_redeem_code_id). Unconfirmed/failed codes are never written to the
+ * pool, so a partially-failed job can't seed checkout-invalid codes; the
+ * watermark top-up path naturally refills any shortfall.
  */
 async function mintCodes(
   businessId: string,
@@ -139,12 +146,20 @@ async function mintCodes(
   const codes = generatePoolCodes(campaignId.slice(0, 4).toUpperCase() || "SAVE", count);
   let added = 0;
   for (const part of chunk(codes, SHOPIFY_BULK_CHUNK)) {
-    await bulkAddCodes(shopify.client, parentGid, part);
+    const bulkId = await bulkAddCodes(shopify.client, parentGid, part);
+    if (!bulkId) continue;
+
+    const result = await pollBulkCreation(shopify.client, bulkId);
+    if (result.codes.length === 0) continue; // nothing confirmed → skip persist
+
     const { data, error } = await adminClient().rpc("coupon_pool_add_codes", {
       p_business_id: businessId,
       p_campaign_id: campaignId,
       p_parent_gid: parentGid,
-      p_codes: part.map((code) => ({ code })),
+      p_codes: result.codes.map((c) => ({
+        code: c.code,
+        shopify_redeem_code_id: c.redeemId,
+      })),
     });
     if (error) throw new Error(`coupon_pool_add_codes failed: ${error.message}`);
     added += typeof data === "number" ? data : 0;
