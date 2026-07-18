@@ -25,4 +25,10 @@ export class AnalyticsController extends Controller {
     const data = await this.service.overview();
     return ok(data, { correlationId: this.ctx.correlationId, version: this.ctx.version });
   }
+
+  async performance(): Promise<NextResponse> {
+    requireScope(this.principal(), "read");
+    const data = await this.service.performance();
+    return ok(data, { correlationId: this.ctx.correlationId, version: this.ctx.version });
+  }
 }

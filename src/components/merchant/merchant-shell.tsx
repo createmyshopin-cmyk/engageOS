@@ -23,6 +23,11 @@ import {
   AlertTriangle,
   Blocks,
   Send,
+  Store,
+  ShoppingBag,
+  Package,
+  Award,
+  Mail,
 } from "lucide-react";
 
 import { usePathname } from "next/navigation";
@@ -39,12 +44,17 @@ const NAV_ITEMS: NavItem[] = [
   { icon: Megaphone, label: "Campaigns", href: "/m/campaigns" },
   { icon: Trophy, label: "Winners", href: "/m/winners" },
   { icon: Gift, label: "Rewards", href: "/m/rewards" },
+  { icon: Award, label: "Loyalty", href: "/m/loyalty" },
   { icon: Radio, label: "Sources", href: "/m/sources" },
   { icon: Users, label: "Customers", href: "/m/customers" },
   { icon: Activity, label: "Activity", href: "/m/activity" },
+  { icon: ShoppingBag, label: "Orders", href: "/m/orders" },
+  { icon: Package, label: "Products", href: "/m/products" },
+  { icon: Store, label: "Shopify", href: "/m/shopify" },
   { icon: MessageSquare, label: "WhatsApp", href: "/m/whatsapp" },
+  { icon: Mail, label: "Marketing", href: "/m/marketing" },
   { icon: Blocks, label: "Integrations", href: "/m/integrations" },
-  { icon: BarChart3, label: "Reports", href: "#" },
+  { icon: BarChart3, label: "Analytics", href: "/m/analytics" },
   { icon: Settings, label: "Settings", href: "#" },
   { icon: HelpCircle, label: "Help & Support", href: "#" },
 ];

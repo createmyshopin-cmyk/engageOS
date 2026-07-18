@@ -1,26 +1,21 @@
-import { defineRoute, NotImplementedError } from "@/server";
+import { defineRoute } from "@/server/http/handler";
+import { LoyaltyController } from "@/server/modules/loyalty/controller";
+import { loyaltyParam } from "@/server/modules/loyalty/validator";
+
+export const runtime = "nodejs";
 
 /**
- * Loyalty module — /api/v1/loyalty
+ * Loyalty module — /api/v1/loyalty/[customerId]
  *
- * SCAFFOLD. Points/tier balances and ledger for a customer. Balances are
- * derived from the universal event stream + loyalty rules; this API exposes
- * the computed state and the accrual/redemption ledger.
+ * A customer's loyalty/engagement standing, projected from the precomputed
+ * `customer_analytics` RFM model (0036). Read-only: it reports the computed
+ * state and never recomputes or double-credits reward grants. Tenancy is
+ * derived from the authenticated session; a foreign customer id 404s.
  *
- * Tenancy: scoped by business_id; a customer's balance is only visible to its
- * own tenant.
- *
- * Planned surface:
- *   GET  /api/v1/loyalty/:customerId            → balance + tier
- *   GET  /api/v1/loyalty/:customerId/ledger     → accrual/redemption history
- *   POST /api/v1/loyalty/:customerId/adjust     → manual adjust (owner scope, audited)
- *
- * Must reconcile with the reward engine — never double-credit points already
- * granted by a reward redemption.
+ * GET /api/v1/loyalty/:customerId → RFM + engagement standing
  */
-
 export const GET = defineRoute({
-  handler: async () => {
-    throw new NotImplementedError("loyalty is not implemented yet");
-  },
+  auth: true,
+  params: loyaltyParam,
+  handler: ({ ctx, params }) => new LoyaltyController(ctx).get(params.customerId),
 });

@@ -47,7 +47,21 @@ function actorTypeForRole(role: MerchantRole): CampaignEventActor {
  */
 
 /** Tables that own a business_id column and are auto-scoped. */
-type TenantTable = "campaigns" | "customers" | "plays" | "coupons";
+type TenantTable =
+  | "campaigns"
+  | "customers"
+  | "plays"
+  | "coupons"
+  // Commerce domain (0038) — every row carries business_id NN, so the same
+  // auto-scoping applies. Added for the v1 read models (orders/products/shopify).
+  | "orders"
+  | "order_items"
+  | "shopify_products"
+  | "shopify_shops"
+  // CDP analytics (0036) — customer_analytics.business_id NN; loyalty read model.
+  | "customer_analytics"
+  // WhatsApp broadcast ledger (0027) — business_id NN. Read-only marketing feed.
+  | "whatsapp_broadcasts";
 
 export class TenantRepository {
   constructor(

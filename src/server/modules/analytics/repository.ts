@@ -1,7 +1,11 @@
 import "server-only";
 import { Repository } from "@/server/core/Repository";
 import type { TenantRepository } from "@/lib/db/tenant-repository";
-import type { BusinessTotalsRow } from "@/server/modules/analytics/dto";
+import type {
+  BusinessTotalsRow,
+  CampaignPerformanceRowLike,
+  TrafficSourceRowLike,
+} from "@/server/modules/analytics/dto";
 
 /**
  * AnalyticsRepository — read-only aggregate access for merchant reporting.
@@ -12,8 +16,8 @@ import type { BusinessTotalsRow } from "@/server/modules/analytics/dto";
  * business's totals.
  */
 export class AnalyticsRepository extends Repository {
-  constructor(tenant: TenantRepository) {
-    super(tenant);
+  constructor(private readonly tenantRepo: TenantRepository) {
+    super(tenantRepo);
   }
 
   /** Business-wide KPI totals from the event log (dashboard overview). */
@@ -33,5 +37,15 @@ export class AnalyticsRepository extends Repository {
         return_visits: 0,
       }
     );
+  }
+
+  /** Per-campaign leaderboard (reuses the existing campaign_performance RPC). */
+  async campaignPerformance(): Promise<CampaignPerformanceRowLike[]> {
+    return this.tenantRepo.campaignPerformance();
+  }
+
+  /** Traffic-source breakdown (reuses the existing traffic_sources RPC). */
+  async trafficSources(): Promise<TrafficSourceRowLike[]> {
+    return this.tenantRepo.trafficSources();
   }
 }

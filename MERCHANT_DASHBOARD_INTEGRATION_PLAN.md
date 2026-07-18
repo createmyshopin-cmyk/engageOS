@@ -233,3 +233,64 @@ No new design system. No visual redesign.
 **Gates:** `tsc --noEmit` EXIT 0 · `next build` EXIT 0 (both endpoints in manifest, no longer stubs) · `vitest run` **30/30** passing (was 24).
 
 **Next:** Phase 4 (Shopify read-only views) or Phases 5–8 (Orders/Products/Loyalty/Analytics — each Type-B endpoint + UI).
+
+### Phase 4 — Shopify (read-only) ✅ COMPLETE (2026-07-18) · superseded by the Sync Engine (below)
+**Approach (D4=READ-ONLY VIEWS):** a window onto already-ingested webhook data — **no OAuth/install button** (managed out of band). New `shopify` read module (read-repository/read-service/read-controller/dto) exposing `GET /api/v1/shopify/overview` → `{connected, shop, totals:{orders,products,revenue}, lastOrderAt}`. Repo selects **display-safe columns only** (no token/secret columns ever leave the DB); revenue summed in-app over `total_price`.
+- Client: `use-shopify.ts` (`useShopifyOverview`) + `shopify-view.tsx` (connection banner + 3 StatCards → /m/orders, /m/products; loading/empty/error). RSC page `src/app/m/shopify/page.tsx`.
+- Nav: added Orders/Products/Shopify/Loyalty/Marketing/Analytics items (`merchant-shell.tsx`), WATI injection stays index-independent.
+**Gates:** `tsc` 0 · `next build` 0 · `vitest` 30→**30** (+shopify contract test).
+> The read-only overview is retained (still the "connected" totals strip), but the page now also drives the full **Shopify Sync Engine** — connect/OAuth, manual/selective/scheduled sync, live progress, job logs, disconnect. See the Sync Engine phase below and `SHOPIFY_SYNC_IMPLEMENTATION.md`.
+
+### Phase 5 — Orders ✅ COMPLETE (2026-07-18)
+**Type-B** read model over the `orders` table (ingestion owns writes; this surface is read+filter only). New `orders` module: keyset over `(placed_at, id)`, optional `financial_status`/`customer_id` filters, customer name via **embedded `customers(name)`** (not `!inner`, so guest orders still appear). `GET /api/v1/orders`.
+- Client: `use-orders.ts` (`useOrderList` infinite, `flattenOrderPages`) + `orders-view.tsx` (status pills, IntersectionObserver infinite scroll, status-tone chips). RSC page `src/app/m/orders/page.tsx`.
+- `TenantTable` union extended (orders/order_items — `business_id NN`, auto-scoping correct).
+**Gates:** `tsc` 0 · `vitest` **36** · build deferred to Phase 6.
+
+### Phase 6 — Products ✅ COMPLETE (2026-07-18)
+**Type-B** read model over `shopify_products`: keyset over `(created_at, id)`, optional status eq, search ilike over title/handle/vendor (`%_` escaped). `price` preserves **null distinct from 0**. `GET /api/v1/products`.
+- Client: `use-products.ts` (`useProductList(search)`) + `products-view.tsx` (debounced search, card grid, infinite scroll). Uses plain `<img loading="lazy">` (no `next/image` — `images.remotePatterns` unset, Shopify CDN hosts unbounded; matches codebase convention). RSC page `src/app/m/products/page.tsx`.
+**Gates:** `tsc` 0 · `next build` 0 (covers Phases 4–6, all routes/pages in manifest) · `vitest` **38**.
+
+### Phase 7 — Loyalty ✅ COMPLETE (2026-07-18)
+Loyalty = the precomputed **`customer_analytics` RFM/engagement model** (0036) — never recomputed, never double-credits reward grants. New `loyalty` module: `byCustomer` (analytics maybeSingle) + `customerExists`; service returns the profile if analytics exist, a **zeroed `emptyLoyaltyProfileDTO`** if the customer exists but has no activity, else `NotFoundError`. `GET /api/v1/loyalty/[customerId]`.
+- Client: `use-loyalty.ts` (`useLoyaltyProfile`, `enabled` when id set) + `loyalty-view.tsx` — **reuses `useCustomerList`+`flattenCustomerPages`** for the picker (no duplicated search endpoint), then RFM standing (metric grid + RFM/health header). RSC page `src/app/m/loyalty/page.tsx`.
+- `TenantTable` union extended (`customer_analytics`).
+**Gates:** `tsc` 0 · `vitest` **41** (+3 loyalty-dto) · build deferred to Phase 8.
+
+### Phase 8 — Analytics ✅ COMPLETE (2026-07-18)
+**Extended the existing `analytics` module** (no duplication): added performance DTOs + `toCampaignPerformanceDTO`/`toTrafficSourceDTO`, and `campaignPerformance()`/`trafficSources()` on the repository **reusing the existing `campaign_performance` / `traffic_sources` RPCs already on `TenantRepository` — zero new SQL**. `GET /api/v1/analytics/performance` → `{campaigns, sources}`.
+- Client: `use-analytics.ts` (`useAnalyticsPerformance`) + `analytics-view.tsx` — combines the existing `useAnalyticsOverview()` KPI snapshot with a campaign leaderboard + traffic-source breakdown (share-of-scans bars); **each panel owns its own loading/empty/error state** so one failing RPC never blanks the other. RSC page `src/app/m/analytics/page.tsx` (nav label "Reports #" → "Analytics").
+**Gates:** `tsc` 0 · `next build` 0 (covers Phases 7–8; `/api/v1/analytics/performance` + `/m/analytics` in manifest) · `vitest` **44** (+3 analytics-performance-dto).
+
+### Phase 9 — Marketing (UI only, NO automation) ✅ COMPLETE (2026-07-18)
+Per brief — **read-only surface, no send automation**. New `marketing` module lists the existing **`whatsapp_broadcasts` launch ledger** (0027) via `GET /api/v1/marketing/broadcasts` (keyset over `(created_at, id)`), wiring the stub's documented `GET → list sends`. **`POST` stays a 501 `NotImplementedError`** — launching/scheduling is not implemented and the live send path remains the existing WhatsApp composer (no duplicated send logic, consent enforcement untouched).
+- Client: `use-marketing.ts` (`useBroadcastList` infinite, `flattenBroadcastPages`) + `marketing-view.tsx` — read-only broadcast feed with per-send delivery funnel (recipients/sent/delivered/read/failed), infinite scroll, and a **"New broadcast" link to `/m/whatsapp`** (hand-off, not an inline send). RSC page `src/app/m/marketing/page.tsx`.
+- `TenantTable` union extended (`whatsapp_broadcasts` — `business_id NN`).
+**Gates:** `tsc` 0 · `next build` 0 (`/api/v1/marketing/broadcasts` + `/m/marketing` in manifest) · `vitest` **46** (+2 marketing-dto).
+
+**Status:** Phases 1–9 complete. Remaining out-of-scope 501 stubs (future work, not in this task): `merchants/me`, `referrals/[customerId]`, `rewards`, `segments`, `coupons`, `admin/merchants`, `auth/session`, `campaigns` POST (create), `marketing/broadcasts` POST (send). Settings/Help pages already existed.
+
+---
+
+### Phase 10 — Shopify Sync Engine ✅ COMPLETE (2026-07-18)
+**The first operational engine after the Dashboard integration.** Full OAuth install → token management → webhook registration → initial/incremental/manual/scheduled sync → live dashboard. Strictly additive; the Phase 4 read-only overview is retained and reused. Full spec: **`SHOPIFY_SYNC_IMPLEMENTATION.md`**.
+
+**Architecture (Controller → Service → Repository → RPC; no layer bypass, no SQL in controllers, tokens never leave the server):**
+- **Integration layer** (`src/lib/shopify/`, service-role, kept OUT of `TenantRepository`): `oauth.ts` (authorize URL, state nonce, `*.myshopify.com` guard), `store.ts` (business-scoped token + job/state persistence, AES-256-GCM token encryption via `WACRM_ENCRYPTION_KEY`), `adapter.ts` (tenant-aware facade: `connectShopify`/`disconnectShopify`/`WEBHOOK_TOPICS`), `client.ts` (Admin API), `sync-engine.ts` (`runSyncJob`/`claimAndRunJob`/`drainDueJobs`), `normalizers.ts`, `types.ts` (`SYNC_RESOURCES`).
+- **v1 sync module** (`src/server/modules/shopify/sync/`): `validator` (Zod; `business_id` never accepted) · `dto` (snake→camel mappers over the read-model RPCs; display-safe fields only) · `repository` (`rpcScalar` over `shopify_connection_health` / `shopify_sync_status` / `shopify_recent_sync_jobs` / `shopify_create_sync_job`) · `service` (assembles the dashboard bundle; `trigger()` de-dupes + canonicalizes resource targets, enqueues idempotently, does NOT run jobs) · `controller` (read gated `read`, trigger gated `write` then `after()` runs `claimAndRunJob` per enqueued id — no long-running HTTP).
+- **v1 connection module** (`.../connection/`): `disconnect()` gated **owner/manager** (`requireRole`) → drops the encrypted token row.
+
+**Endpoints:** `GET /api/v1/shopify/sync` (overview bundle) · `POST /api/v1/shopify/sync` (trigger, full or selective) · `GET /api/v1/shopify/sync/health` · `GET /api/v1/shopify/sync/jobs` · `POST /api/v1/shopify/disconnect` · OAuth `GET /api/shopify/install` + `/callback` · scheduler `GET /api/shopify/cron` (shared-secret `x-cron-secret`, `timingSafeEqual`, 503 if unconfigured).
+
+**Background processing:** trigger enqueues then returns; execution runs in `after()` via the atomic `queued→running` claim (`claimAndRunJob`), so a job the cron scheduler also drains is never double-processed. Every job tracks progress/duration/errors/attempts and is resumable. Scheduler decides "which stores are due" in SQL (`shopify_enqueue_due_syncs`), keeping the cron route thin (enqueue → drain).
+
+**Dashboard (`shopify-view.tsx` + `shopify-sync-panel.tsx`):** disconnected → connect form (normalizes domain → top-level nav to `/api/shopify/install`, never a fetch); connected → totals strip + Sync Engine panel (connection health, 24h webhook throughput, live active-job progress bar polling every 4s, per-resource state with selective "sync now", recent-job log, disconnect with confirm). `?connected=1` / `?shopify_error=` banners from the OAuth redirects.
+
+**Security:** tokens AES-256-GCM encrypted at rest, never sent to the client, never in a DTO; every webhook HMAC-verified (`SHOPIFY_WEBHOOK_SECRET`) with `business_id` from the verified tenant row (never payload); tenant isolation via session-derived `businessId`; idempotent webhook + job processing.
+
+**Migration:** `0040_shopify_sync_engine.sql` (shops/tokens, sync_jobs, sync_state, webhook log, read-model RPCs, `shopify_enqueue_due_syncs`). *Applied by operator via `supabase db push` (D3 = "you apply, I verify").*
+
+**Env:** `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `SHOPIFY_SCOPES` (optional), `SHOPIFY_WEBHOOK_SECRET`, `SHOPIFY_CRON_SECRET` — documented in `.env.example`.
+
+**Gates:** `tsc` 0 · `next build` 0 (all sync/disconnect/cron routes in manifest) · `vitest` **56** (+10 shopify-sync-dto: health/state/job mappers + trigger target selection) · backward-compatible (Phases 1–9 untouched) · tenant isolation preserved (session-derived id, RPC-scoped) · perf: async/resumable jobs, keyset reads, no held HTTP.

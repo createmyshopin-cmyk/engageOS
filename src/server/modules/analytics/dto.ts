@@ -37,3 +37,83 @@ export function toAnalyticsOverviewDTO(row: BusinessTotalsRow): AnalyticsOvervie
     returnVisits: Number(row.return_visits) || 0,
   };
 }
+
+/**
+ * The analytics "performance" surface — a campaign leaderboard plus a traffic-
+ * source breakdown, both sourced from existing tenant aggregate RPCs
+ * (campaign_performance, traffic_sources). No new SQL; this DTO only reshapes
+ * the already-normalized rows into camelCase wire types.
+ */
+export interface CampaignPerformanceDTO {
+  campaignId: string;
+  campaignName: string;
+  status: string;
+  totalEvents: number;
+  scans: number;
+  registrations: number;
+  scratches: number;
+  redemptions: number;
+  lastActivity: string | null;
+}
+
+export interface TrafficSourceDTO {
+  source: string;
+  qrScans: number;
+  registrations: number;
+  plays: number;
+  wins: number;
+  redemptions: number;
+}
+
+export interface AnalyticsPerformanceDTO {
+  campaigns: CampaignPerformanceDTO[];
+  sources: TrafficSourceDTO[];
+}
+
+/** Row shape from TenantRepository.campaignPerformance() (already coerced). */
+export interface CampaignPerformanceRowLike {
+  campaign_id: string;
+  campaign_name: string;
+  campaign_status: string;
+  total_events: number;
+  scans: number;
+  registrations: number;
+  scratches: number;
+  redemptions: number;
+  last_activity: string | null;
+}
+
+/** Row shape from TenantRepository.trafficSources() (already coerced). */
+export interface TrafficSourceRowLike {
+  source: string;
+  qr_scans: number;
+  registrations: number;
+  plays: number;
+  wins: number;
+  redemptions: number;
+}
+
+export function toCampaignPerformanceDTO(row: CampaignPerformanceRowLike): CampaignPerformanceDTO {
+  return {
+    campaignId: row.campaign_id,
+    campaignName: row.campaign_name,
+    status: row.campaign_status,
+    totalEvents: Number(row.total_events) || 0,
+    scans: Number(row.scans) || 0,
+    registrations: Number(row.registrations) || 0,
+    scratches: Number(row.scratches) || 0,
+    redemptions: Number(row.redemptions) || 0,
+    lastActivity: row.last_activity,
+  };
+}
+
+export function toTrafficSourceDTO(row: TrafficSourceRowLike): TrafficSourceDTO {
+  return {
+    source: row.source,
+    qrScans: Number(row.qr_scans) || 0,
+    registrations: Number(row.registrations) || 0,
+    plays: Number(row.plays) || 0,
+    wins: Number(row.wins) || 0,
+    redemptions: Number(row.redemptions) || 0,
+  };
+}

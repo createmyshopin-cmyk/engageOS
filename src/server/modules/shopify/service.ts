@@ -3,6 +3,21 @@ import { adminClient } from "@/lib/db/rpc";
 import type { Logger } from "@/server/observability/logger";
 import type { ShopifyTenant } from "@/server/modules/shopify/webhook-security";
 import { normalizeShopifyOrder } from "@/server/modules/shopify/normalizer";
+import {
+  normalizeCollection,
+  normalizeCustomer,
+  normalizeDiscount,
+  normalizeInventoryLevel,
+  normalizeProduct,
+} from "@/lib/shopify/normalizers";
+import {
+  upsertCollection,
+  upsertCustomer,
+  upsertDiscount,
+  upsertInventory,
+  upsertProduct,
+} from "@/lib/shopify/store";
+import { markUninstalled } from "@/lib/shopify/adapter";
 
 /**
  * Shopify ingestion service — the business logic behind the webhook.
@@ -12,9 +27,9 @@ import { normalizeShopifyOrder } from "@/server/modules/shopify/normalizer";
  * layers:
  *   1. `shopify_log_webhook` claims the X-Shopify-Webhook-Id — a redelivery
  *      returns false and we stop, so the same webhook never processes twice.
- *   2. `shopify_ingest_order` upserts on (business_id, shopify_order_id) and
- *      dedups the universal event on `shopify:order:<id>` — so even a distinct
- *      webhook id for the same order can't double-count.
+ *   2. Each upsert lands on a tenant-scoped external-id key (orders also dedup
+ *      the universal event on `shopify:order:<id>`) — so even a distinct webhook
+ *      id for the same entity can't double-count.
  *
  * This service uses the service-role client directly (there is no merchant
  * session on a webhook); the business_id comes from the HMAC-verified tenant,
@@ -66,6 +81,33 @@ export class ShopifyIngestionService {
         case "orders/paid":
           await this.ingestOrder(payload);
           break;
+        case "customers/create":
+        case "customers/update":
+          await upsertCustomer(this.tenant.businessId, normalizeCustomer(payload as Record<string, unknown>));
+          break;
+        case "products/create":
+        case "products/update":
+          await upsertProduct(this.tenant.businessId, normalizeProduct(payload as Record<string, unknown>));
+          break;
+        case "products/delete":
+          await this.deleteProduct(payload);
+          break;
+        case "collections/create":
+        case "collections/update":
+          await upsertCollection(this.tenant.businessId, normalizeCollection(payload as Record<string, unknown>));
+          break;
+        case "inventory_levels/update":
+          await upsertInventory(this.tenant.businessId, normalizeInventoryLevel(payload as Record<string, unknown>));
+          break;
+        case "discounts/create":
+        case "discounts/update":
+          await upsertDiscount(this.tenant.businessId, normalizeDiscount(payload as Record<string, unknown>));
+          break;
+        case "app/uninstalled":
+          // The token is already dead. Revoke the shop so no further sync runs
+          // and inbound webhooks stop resolving (status must be 'active').
+          await markUninstalled(this.tenant.businessId);
+          break;
         default:
           // Logged for visibility; unhandled topics are still idempotently
           // recorded so we can backfill handlers later without data loss.
@@ -89,6 +131,17 @@ export class ShopifyIngestionService {
       shopifyOrderId: normalized.shopify_order_id,
       total: normalized.total_price,
     });
+  }
+
+  /** Soft-remove a product from the mirror on products/delete. */
+  private async deleteProduct(payload: unknown): Promise<void> {
+    const id = (payload as { id?: number | string } | null)?.id;
+    if (id == null) return;
+    await adminClient()
+      .from("shopify_products")
+      .delete()
+      .eq("business_id", this.tenant.businessId)
+      .eq("shopify_product_id", String(id));
   }
 
   private async markProcessed(meta: WebhookMeta): Promise<void> {

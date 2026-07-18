@@ -125,6 +125,34 @@ export interface AnalyticsOverviewDTO {
   returnVisits: number;
 }
 
+// ── Analytics performance DTOs (mirror of analytics/dto.ts) ──
+
+export interface CampaignPerformanceDTO {
+  campaignId: string;
+  campaignName: string;
+  status: string;
+  totalEvents: number;
+  scans: number;
+  registrations: number;
+  scratches: number;
+  redemptions: number;
+  lastActivity: string | null;
+}
+
+export interface TrafficSourceDTO {
+  source: string;
+  qrScans: number;
+  registrations: number;
+  plays: number;
+  wins: number;
+  redemptions: number;
+}
+
+export interface AnalyticsPerformanceDTO {
+  campaigns: CampaignPerformanceDTO[];
+  sources: TrafficSourceDTO[];
+}
+
 // ── Campaign DTOs (mirror of src/server/modules/campaigns/dto.ts) ──
 
 export interface CampaignStatsDTO {
@@ -148,4 +176,155 @@ export interface CampaignListItemDTO {
   logoUrl: string | null;
   createdAt: string;
   stats: CampaignStatsDTO;
+}
+
+// ── Shopify overview DTO (mirror of src/server/modules/shopify/dto.ts) ──
+
+export interface ShopifyOverviewDTO {
+  connected: boolean;
+  shop: {
+    domain: string;
+    status: string;
+    installedAt: string | null;
+  } | null;
+  totals: {
+    orders: number;
+    products: number;
+    revenue: number;
+  };
+  lastOrderAt: string | null;
+}
+
+// ── Shopify sync DTOs (mirror of src/server/modules/shopify/sync/dto.ts) ──
+
+export interface ShopifyWebhookThroughputDTO {
+  processed: number;
+  failed: number;
+  total: number;
+}
+
+export interface ShopifyActiveJobDTO {
+  resource: string;
+  status: string;
+  processed: number;
+  total: number | null;
+}
+
+export interface ShopifyConnectionHealthDTO {
+  connected: boolean;
+  shopDomain: string | null;
+  status: string | null;
+  installedAt: string | null;
+  webhooks24h: ShopifyWebhookThroughputDTO;
+  activeJob: ShopifyActiveJobDTO | null;
+  lastError: string | null;
+}
+
+export interface ShopifyResourceSyncStateDTO {
+  resource: string;
+  lastSyncedAt: string | null;
+  lastStatus: string | null;
+  nextSyncAt: string | null;
+  totalSynced: number;
+  updatedAt: string | null;
+}
+
+export interface ShopifySyncJobDTO {
+  id: string;
+  resource: string;
+  mode: string;
+  status: string;
+  processed: number;
+  total: number | null;
+  failed: number;
+  attempts: number;
+  error: string | null;
+  triggeredBy: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+  createdAt: string;
+}
+
+export interface ShopifySyncOverviewDTO {
+  health: ShopifyConnectionHealthDTO;
+  resources: ShopifyResourceSyncStateDTO[];
+  recentJobs: ShopifySyncJobDTO[];
+}
+
+export interface ShopifyTriggerResultDTO {
+  enqueued: Array<{ resource: string; jobId: string | null }>;
+  mode: string;
+}
+
+// ── Orders DTOs (mirror of src/server/modules/orders/dto.ts) ──
+
+export interface OrderListItemDTO {
+  id: string;
+  orderNumber: string | null;
+  source: string;
+  financialStatus: string | null;
+  fulfillmentStatus: string | null;
+  currency: string;
+  totalPrice: number;
+  customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  placedAt: string;
+}
+
+// ── Products DTOs (mirror of src/server/modules/products/dto.ts) ──
+
+export interface ProductListItemDTO {
+  id: string;
+  title: string | null;
+  handle: string | null;
+  productType: string | null;
+  vendor: string | null;
+  status: string | null;
+  price: number | null;
+  imageUrl: string | null;
+  createdAt: string;
+}
+
+// ── Loyalty DTO (mirror of src/server/modules/loyalty/dto.ts) ──
+
+export interface LoyaltyProfileDTO {
+  customerId: string;
+  totalOrders: number;
+  totalSpend: number;
+  avgOrderValue: number | null;
+  totalPlays: number;
+  totalWins: number;
+  totalRedemptions: number;
+  recencyDays: number | null;
+  frequency: number;
+  monetary: number;
+  rfmScore: string | null;
+  healthScore: number | null;
+  clv: number | null;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  lastOrderAt: string | null;
+  computedAt: string | null;
+}
+
+// ── Marketing DTO (mirror of src/server/modules/marketing/dto.ts) ──
+
+export interface BroadcastListItemDTO {
+  id: string;
+  channel: "whatsapp";
+  name: string;
+  templateName: string;
+  templateLanguage: string;
+  segment: string;
+  status: string;
+  totalRecipients: number;
+  accepted: number;
+  rejected: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  failed: number;
+  createdAt: string;
 }

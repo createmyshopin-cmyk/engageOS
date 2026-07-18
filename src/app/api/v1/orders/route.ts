@@ -1,23 +1,23 @@
-import { defineRoute, NotImplementedError } from "@/server";
+import { defineRoute } from "@/server/http/handler";
+import { OrderController } from "@/server/modules/orders/controller";
+import { listOrdersQuery } from "@/server/modules/orders/validator";
+
+export const runtime = "nodejs";
 
 /**
  * Orders module — /api/v1/orders
  *
- * SCAFFOLD. Read model over the `orders`/`order_items` tables that the Shopify
- * ingestion pipeline (and future POS/manual sources) land into. Orders are
- * WRITTEN by ingestion services, never created through this API — this surface
- * is read + query only.
+ * Read model over the `orders` table that the Shopify ingestion pipeline (and
+ * future POS/manual sources) land into. Orders are WRITTEN by ingestion
+ * services, never created through this API — this surface is read + query only.
  *
- * Tenancy: orders scoped by business_id; every query keyset-paginated.
+ * Tenancy: derived from the authenticated session; every query is keyset-
+ * paginated over (placed_at, id).
  *
- * Planned surface:
- *   GET /api/v1/orders                → list (cursor, filter by status/date/customer)
- *   GET /api/v1/orders/:id            → detail incl. line items
- *   GET /api/v1/orders/:id/timeline   → order-scoped event slice
+ * GET /api/v1/orders → list (cursor, filter by financial status / customer)
  */
-
 export const GET = defineRoute({
-  handler: async () => {
-    throw new NotImplementedError("orders.list is not implemented yet");
-  },
+  auth: true,
+  query: listOrdersQuery,
+  handler: ({ ctx, query }) => new OrderController(ctx).list(query),
 });

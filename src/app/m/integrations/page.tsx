@@ -5,6 +5,7 @@ import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { getIntegration } from "@/lib/wacrm/store";
 import { getWatiIntegration } from "@/lib/wati/store";
 import { listBusinessTracking } from "@/lib/tracking/store";
+import { getShop } from "@/lib/shopify/store";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
 import {
   Blocks,
@@ -81,6 +82,19 @@ export default async function IntegrationsPage() {
     trackingConnected = rows.filter((r) => r.enabled && r.status === "connected").length;
   } catch (err) {
     console.error("Failed to load tracking status:", err);
+  }
+
+  // Shopify status — a store is "connected" once it holds a live access token.
+  let shopifyConnected = false;
+  let shopifyAccountName: string | null = null;
+  try {
+    const shop = await getShop(repo.businessId);
+    if (shop && shop.status === "active" && shop.access_token_enc) {
+      shopifyConnected = true;
+      shopifyAccountName = shop.shop_domain;
+    }
+  } catch (err) {
+    console.error("Failed to load Shopify status:", err);
   }
 
   const marketing: IntegrationCardData[] = [
@@ -178,14 +192,14 @@ export default async function IntegrationsPage() {
       id: "shopify",
       name: "Shopify",
       description:
-        "Sync products and reward coupons with your Shopify store so winners can redeem instantly at checkout.",
+        "Sync customers, products, orders, collections, inventory and discounts from your Shopify store — with live webhooks and background sync.",
       icon: ShoppingBag,
       iconBg: "bg-[#ECFDF5]",
       iconColor: "text-[#059669]",
-      status: "coming_soon",
-      href: "#",
-      badgeLabel: "Coming Soon",
-      accountName: null,
+      status: shopifyConnected ? "connected" : "disconnected",
+      href: "/m/shopify",
+      badgeLabel: shopifyConnected ? "Connected" : "Available",
+      accountName: shopifyAccountName,
     },
     {
       id: "woocommerce",

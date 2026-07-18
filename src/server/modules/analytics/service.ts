@@ -3,7 +3,13 @@ import { Service } from "@/server/core/Service";
 import type { RequestContext } from "@/server/http/context";
 import type { TenantRepository } from "@/lib/db/tenant-repository";
 import { AnalyticsRepository } from "@/server/modules/analytics/repository";
-import { toAnalyticsOverviewDTO, type AnalyticsOverviewDTO } from "@/server/modules/analytics/dto";
+import {
+  toAnalyticsOverviewDTO,
+  toCampaignPerformanceDTO,
+  toTrafficSourceDTO,
+  type AnalyticsOverviewDTO,
+  type AnalyticsPerformanceDTO,
+} from "@/server/modules/analytics/dto";
 
 /**
  * AnalyticsService — merchant reporting read models.
@@ -25,5 +31,17 @@ export class AnalyticsService extends Service {
   async overview(): Promise<AnalyticsOverviewDTO> {
     const totals = await this.repo.businessTotals();
     return toAnalyticsOverviewDTO(totals);
+  }
+
+  /** Campaign leaderboard + traffic-source breakdown (one round-trip each). */
+  async performance(): Promise<AnalyticsPerformanceDTO> {
+    const [campaigns, sources] = await Promise.all([
+      this.repo.campaignPerformance(),
+      this.repo.trafficSources(),
+    ]);
+    return {
+      campaigns: campaigns.map(toCampaignPerformanceDTO),
+      sources: sources.map(toTrafficSourceDTO),
+    };
   }
 }
