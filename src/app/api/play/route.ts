@@ -64,6 +64,21 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
         name: parsed.data.name,
         result,
       });
+      // Coupon Drop: self-heal the code pool if this win drew it low. Keyed only
+      // by campaign_id (business resolved server-side); no-op for other types.
+      if (result.status === "ok" && result.won && result.campaign_id) {
+        const campaignId = result.campaign_id;
+        void (async () => {
+          try {
+            const { topUpPoolForCampaign } = await import(
+              "@/lib/shopify/coupon-drop-orchestrator"
+            );
+            await topUpPoolForCampaign(campaignId);
+          } catch (err) {
+            console.error("coupon pool top-up error:", err);
+          }
+        })();
+      }
     });
 
     return NextResponse.json({ ok: true, result });

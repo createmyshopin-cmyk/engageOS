@@ -11,6 +11,7 @@ import type {
   CampaignEventType,
   CampaignPerformanceRow,
   CampaignTimelineEvent,
+  CouponDropStats,
   MerchantRole,
   MerchantSessionPayload,
   RecentCampaignEvent,
@@ -271,9 +272,29 @@ export class TenantRepository {
     };
   }
 
+  /** Coupon Drop analytics — pool + issuance + redemption + attributed sales. */
+  async couponDropStats(campaignId: string): Promise<CouponDropStats> {
+    const { data, error } = await this.supabase.rpc("coupon_drop_stats", {
+      p_business_id: this.businessId,
+      p_campaign_id: campaignId,
+    });
+    if (error) throw new Error(`couponDropStats failed: ${error.message}`);
+    const row = ((data ?? []) as any[])[0] ?? {};
+    return {
+      codes_minted: Number(row.codes_minted) || 0,
+      codes_available: Number(row.codes_available) || 0,
+      codes_claimed: Number(row.codes_claimed) || 0,
+      codes_redeemed: Number(row.codes_redeemed) || 0,
+      fallback_issued: Number(row.fallback_issued) || 0,
+      orders_attributed: Number(row.orders_attributed) || 0,
+      gross_sales_attributed: Number(row.gross_sales_attributed) || 0,
+      avg_order_value: Number(row.avg_order_value) || 0,
+      currency: (row.currency as string) || "INR",
+    };
+  }
+
   /** Business-wide totals from the immutable event log (dashboard KPIs). */
-  async businessEventTotals(): Promise<{
-    customers: number;
+  async businessEventTotals(): Promise<{    customers: number;
     plays: number;
     wins: number;
     losses: number;

@@ -164,6 +164,32 @@ export class ShopifyClient {
     return body.webhook?.id != null ? String(body.webhook.id) : null;
   }
 
+  /**
+   * Execute a GraphQL Admin API operation. POSTs to `${base}/graphql.json` via
+   * the same authenticated `fetch()` used by the REST calls. Throws a
+   * ShopifyApiError on a non-2xx response OR on any top-level `errors[]` (an
+   * HTTP-200 GraphQL failure). Mutation-level `userErrors[]` are NOT inspected
+   * here — callers must check them, since they're operation-specific.
+   */
+  async graphql<T = Record<string, unknown>>(
+    query: string,
+    variables: Record<string, unknown> = {}
+  ): Promise<T> {
+    const res = await this.fetch(`${this.base}/graphql.json`, {
+      method: "POST",
+      body: JSON.stringify({ query, variables }),
+    });
+    const body = (await res.json()) as {
+      data?: T;
+      errors?: Array<{ message?: string }>;
+    };
+    if (Array.isArray(body.errors) && body.errors.length > 0) {
+      const detail = body.errors.map((e) => e.message ?? "unknown").join("; ");
+      throw new ShopifyApiError(200, `Shopify GraphQL error: ${detail.slice(0, 300)}`);
+    }
+    return (body.data ?? ({} as T)) as T;
+  }
+
   /** List currently-registered webhooks (used to avoid duplicate registration). */
   async listWebhooks(): Promise<Array<{ id: string; topic: string; address: string }>> {
     const res = await this.fetch(`${this.base}/webhooks.json?limit=250`);

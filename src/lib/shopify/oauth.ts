@@ -29,7 +29,7 @@ export function oauthConfig(): ShopifyOAuthConfig {
   const apiSecret = process.env.SHOPIFY_API_SECRET?.trim();
   const scopes =
     process.env.SHOPIFY_SCOPES?.trim() ||
-    "read_products,read_orders,read_customers,read_inventory,read_locations,read_price_rules,read_discounts";
+    "read_products,read_orders,read_customers,read_inventory,read_locations,read_price_rules,read_discounts,write_discounts";
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? "").replace(/\/+$/, "");
   if (!apiKey || !apiSecret) {
     throw new Error("Shopify OAuth is not configured (SHOPIFY_API_KEY / SHOPIFY_API_SECRET).");

@@ -45,6 +45,14 @@ export interface Business {
 
 export type CampaignStatus = "draft" | "scheduled" | "active" | "paused" | "completed" | "archived";
 
+export type CampaignType =
+  | "scratch_win"
+  | "spin_win"
+  | "lucky_draw"
+  | "quiz_challenge"
+  | "collect_win"
+  | "coupon_drop";
+
 export interface Campaign {
   id: string;
   business_id: string;
@@ -57,6 +65,7 @@ export interface Campaign {
   terms: string | null;
   coupon_prefix: string;
   status: CampaignStatus;
+  campaign_type?: CampaignType;
   starts_at: string;
   ends_at: string;
   created_at: string;
@@ -215,6 +224,16 @@ export type PlayResult =
       prize_background_color: string | null;
       coupon_code: string;
       expires_at: string;
+      /** Present for coupon_drop wins — used for opportunistic pool top-up. */
+      campaign_id?: string;
+      /** How the code was sourced: internal, a Shopify pool code, or fallback. */
+      coupon_source?: "internal" | "shopify_pool" | "internal_fallback";
+      /** True when the code is a unique Shopify discount to redeem online. */
+      redeem_online?: boolean;
+      /** Human-readable discount summary, e.g. "10% off" (reveal copy). */
+      discount_summary?: string;
+      /** The merchant's Shopify storefront URL to redeem at. */
+      store_url?: string;
     }
   | { status: "ok"; won: false }
   | { status: "already_played" }
@@ -249,6 +268,19 @@ export interface CampaignFunnel {
   coupons: number;
   redemptions: number;
   return_visits: number;
+}
+
+/** Coupon Drop campaign analytics (from coupon_drop_stats RPC). */
+export interface CouponDropStats {
+  codes_minted: number;
+  codes_available: number;
+  codes_claimed: number;
+  codes_redeemed: number;
+  fallback_issued: number;
+  orders_attributed: number;
+  gross_sales_attributed: number;
+  avg_order_value: number;
+  currency: string;
 }
 
 export interface CustomerTimelineEvent {

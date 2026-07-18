@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
@@ -53,23 +54,59 @@ const prizeSchema = z.object({
   is_fallback: z.coerce.boolean().default(false),
 });
 
-const createCampaignSchema = z.object({
-  name: z.string().trim().min(2, "Campaign name required").max(80),
-  headline: z.string().trim().min(2, "Headline required").max(60),
-  description: z.string().trim().max(500).optional().or(z.literal("")),
-  banner_url: z.string().trim().url("Invalid banner image URL").optional().or(z.literal("")),
-  logo_url: z.string().trim().url("Invalid logo image URL").optional().or(z.literal("")),
-  terms: z.string().trim().max(1000).optional().or(z.literal("")),
-  coupon_prefix: z
-    .string()
-    .trim()
-    .min(2, "Prefix must be at least 2 characters")
-    .max(10, "Prefix too long")
-    .regex(/^[A-Z0-9]+$/, "Prefix must contain only uppercase letters and numbers"),
-  starts_at: z.coerce.date(),
-  ends_at: z.coerce.date(),
-  prizes: z.array(prizeSchema).min(1, "Add at least one reward").max(8),
+const campaignTypeSchema = z
+  .enum(["scratch_win", "spin_win", "lucky_draw", "quiz_challenge", "collect_win", "coupon_drop"])
+  .default("scratch_win");
+
+/**
+ * Coupon Drop discount rules the merchant configures. discount_type + a positive
+ * discount_value are required (enforced via superRefine); every other rule is
+ * optional. Product/collection scope are Shopify GIDs from the synced catalog.
+ */
+const couponRulesSchema = z.object({
+  win_mode: z.enum(["weighted", "always"]).default("weighted"),
+  discount_type: z.enum(["percentage", "fixed_amount"]),
+  discount_value: z.coerce.number().positive("Discount value must be greater than zero").max(1000000),
+  minimum_subtotal: z.coerce.number().min(0).max(10000000).nullable().optional(),
+  usage_limit: z.coerce.number().int().min(1).max(1000000).nullable().optional(),
+  applies_once_per_customer: z.coerce.boolean().default(false),
+  expiry_days: z.coerce.number().int().min(1).max(365).nullable().optional(),
+  scope_product_ids: z.array(z.string().trim().min(1)).max(250).default([]),
+  scope_collection_ids: z.array(z.string().trim().min(1)).max(250).default([]),
+  currency: z.string().trim().min(3).max(3).default("INR"),
+  pool_target: z.coerce.number().int().min(1).max(100000).default(500),
+  pool_low_watermark: z.coerce.number().int().min(0).max(100000).default(100),
 });
+
+const createCampaignSchema = z
+  .object({
+    name: z.string().trim().min(2, "Campaign name required").max(80),
+    headline: z.string().trim().min(2, "Headline required").max(60),
+    description: z.string().trim().max(500).optional().or(z.literal("")),
+    banner_url: z.string().trim().url("Invalid banner image URL").optional().or(z.literal("")),
+    logo_url: z.string().trim().url("Invalid logo image URL").optional().or(z.literal("")),
+    terms: z.string().trim().max(1000).optional().or(z.literal("")),
+    coupon_prefix: z
+      .string()
+      .trim()
+      .min(2, "Prefix must be at least 2 characters")
+      .max(10, "Prefix too long")
+      .regex(/^[A-Z0-9]+$/, "Prefix must contain only uppercase letters and numbers"),
+    starts_at: z.coerce.date(),
+    ends_at: z.coerce.date(),
+    prizes: z.array(prizeSchema).min(1, "Add at least one reward").max(8),
+    campaign_type: campaignTypeSchema,
+    coupon_rules: couponRulesSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.campaign_type === "coupon_drop" && !data.coupon_rules) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["coupon_rules"],
+        message: "Coupon Drop campaigns require discount rules",
+      });
+    }
+  });
 
 const updateCampaignSchema = z.object({
   name: z.string().trim().min(2, "Campaign name required").max(80),
@@ -116,6 +153,8 @@ export async function createCampaignAction(
     starts_at,
     ends_at,
     prizes,
+    campaign_type,
+    coupon_rules,
   } = validated.data;
 
   if (starts_at.getTime() >= ends_at.getTime()) {
@@ -138,6 +177,7 @@ export async function createCampaignAction(
         terms: terms || null,
         coupon_prefix: coupon_prefix.toUpperCase(),
         status: "draft",
+        campaign_type,
         starts_at: starts_at.toISOString(),
         ends_at: ends_at.toISOString(),
       },
@@ -168,6 +208,33 @@ export async function createCampaignAction(
       // Clean up campaign since the transaction is handled at the app layer.
       await repo.deleteById("campaigns", campaign.id);
       return { error: "Failed to create rewards" };
+    }
+
+    // Coupon Drop: persist the discount rules via a tenant-scoped RPC. Same
+    // app-layer rollback pattern as prizes — a failure here drops the campaign.
+    if (campaign_type === "coupon_drop" && coupon_rules) {
+      try {
+        await repo.callRpc("coupon_config_upsert", {
+          p_business_id: repo.businessId,
+          p_campaign_id: campaign.id,
+          p_win_mode: coupon_rules.win_mode,
+          p_discount_type: coupon_rules.discount_type,
+          p_discount_value: coupon_rules.discount_value,
+          p_minimum_subtotal: coupon_rules.minimum_subtotal ?? null,
+          p_usage_limit: coupon_rules.usage_limit ?? null,
+          p_applies_once_per_customer: coupon_rules.applies_once_per_customer,
+          p_expiry_days: coupon_rules.expiry_days ?? null,
+          p_scope_product_ids: coupon_rules.scope_product_ids,
+          p_scope_collection_ids: coupon_rules.scope_collection_ids,
+          p_currency: coupon_rules.currency,
+          p_pool_target: coupon_rules.pool_target,
+          p_pool_low_watermark: coupon_rules.pool_low_watermark,
+        });
+      } catch (cErr) {
+        console.error("Create coupon config error:", cErr);
+        await repo.deleteById("campaigns", campaign.id);
+        return { error: "Failed to save discount rules" };
+      }
     }
 
     revalidatePath("/m/campaigns");
@@ -269,9 +336,9 @@ export async function updateCampaignStatusAction(
   }
 
   try {
-    const prior = await repo.getCampaign<{ status: CampaignStatus }>(
+    const prior = await repo.getCampaign<{ status: CampaignStatus; campaign_type: string }>(
       campaignId,
-      "status"
+      "status, campaign_type"
     );
     const affected = await repo.updateById("campaigns", campaignId, { status });
 
@@ -288,6 +355,21 @@ export async function updateCampaignStatusAction(
       { from: prior?.status ?? null, to: status },
       await eventContext()
     );
+
+    // Coupon Drop: on activation, mint the unique-code pool in the background.
+    // Off the request path (after()) so the merchant's click returns instantly;
+    // failures record pool_status='error' and the play engine falls back to
+    // internal codes so customers always win.
+    if (status === "active" && prior?.campaign_type === "coupon_drop") {
+      const businessId = repo.businessId;
+      after(async () => {
+        const { activateCouponDropPool } = await import(
+          "@/lib/shopify/coupon-drop-orchestrator"
+        );
+        await activateCouponDropPool(businessId, campaignId);
+      });
+    }
+
     return { error: null, success: true };
   } catch (err: any) {
     return { error: err.message ?? "Failed to update status" };
@@ -551,6 +633,54 @@ export async function updateRedirectAction(
   } catch (err: any) {
     console.error("Update redirect exception:", err);
     return { error: "Failed to save Post Win settings" };
+  }
+}
+
+/** Update the Coupon Drop discount rules for a campaign (ownership-guarded). */
+export async function updateCouponConfigAction(
+  campaignId: string,
+  _prev: ActionState,
+  payload: unknown
+): Promise<ActionState> {
+  const repo = await getTenantRepository();
+  if (!repo) redirect("/m/login");
+
+  if (!(await repo.ownsCampaign(campaignId))) {
+    return { error: "Unauthorized" };
+  }
+
+  const validated = couponRulesSchema.safeParse(payload);
+  if (!validated.success) {
+    return { error: validated.error.issues[0]?.message ?? "Validation failed" };
+  }
+  const r = validated.data;
+
+  try {
+    await repo.callRpc("coupon_config_upsert", {
+      p_business_id: repo.businessId,
+      p_campaign_id: campaignId,
+      p_win_mode: r.win_mode,
+      p_discount_type: r.discount_type,
+      p_discount_value: r.discount_value,
+      p_minimum_subtotal: r.minimum_subtotal ?? null,
+      p_usage_limit: r.usage_limit ?? null,
+      p_applies_once_per_customer: r.applies_once_per_customer,
+      p_expiry_days: r.expiry_days ?? null,
+      p_scope_product_ids: r.scope_product_ids,
+      p_scope_collection_ids: r.scope_collection_ids,
+      p_currency: r.currency,
+      p_pool_target: r.pool_target,
+      p_pool_low_watermark: r.pool_low_watermark,
+    });
+    revalidatePath(`/m/campaigns/${campaignId}`);
+    await repo.audit("coupon_config.update", "campaign", campaignId, {
+      discount_type: r.discount_type,
+      discount_value: r.discount_value,
+    });
+    return { error: null, success: true };
+  } catch (err: any) {
+    console.error("Update coupon config exception:", err);
+    return { error: "Failed to save discount rules" };
   }
 }
 

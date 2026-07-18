@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { enqueueDueSyncs } from "@/lib/shopify/store";
 import { drainDueJobs } from "@/lib/shopify/sync-engine";
+import { topUpAllCouponDropPools } from "@/lib/shopify/coupon-drop-orchestrator";
 import { createLogger, newCorrelationId } from "@/server/observability/logger";
 
 export const runtime = "nodejs";
@@ -61,8 +62,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const enqueued = await enqueueDueSyncs(interval);
     const processed = await drainDueJobs(maxJobs);
-    log.info("shopify.cron.tick", { enqueued, processed, interval, maxJobs });
-    return NextResponse.json({ ok: true, enqueued, processed });
+    // Daily sweep: refill any coupon_drop pool that has dropped below its
+    // watermark. Best-effort — a failure here must not fail the sync tick.
+    let poolsSwept = 0;
+    try {
+      poolsSwept = (await topUpAllCouponDropPools()).swept;
+    } catch (err) {
+      log.error("shopify.cron.pool_topup_failed", {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    log.info("shopify.cron.tick", { enqueued, processed, interval, maxJobs, poolsSwept });
+    return NextResponse.json({ ok: true, enqueued, processed, poolsSwept });
   } catch (err) {
     log.error("shopify.cron.failed", { err: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ ok: false, error: "scheduler error" }, { status: 500 });

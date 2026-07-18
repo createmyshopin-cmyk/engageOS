@@ -80,6 +80,32 @@ type CampaignType =
   | "collect_win"
   | "coupon_drop";
 
+interface CouponRules {
+  win_mode: "weighted" | "always";
+  discount_type: "percentage" | "fixed_amount";
+  discount_value: number;
+  minimum_subtotal: number | null;
+  usage_limit: number | null;
+  applies_once_per_customer: boolean;
+  expiry_days: number | null;
+  currency: string;
+  pool_target: number;
+  pool_low_watermark: number;
+}
+
+const DEFAULT_COUPON_RULES: CouponRules = {
+  win_mode: "weighted",
+  discount_type: "percentage",
+  discount_value: 10,
+  minimum_subtotal: null,
+  usage_limit: 1,
+  applies_once_per_customer: true,
+  expiry_days: 30,
+  currency: "INR",
+  pool_target: 500,
+  pool_low_watermark: 100,
+};
+
 interface CampaignTypeOption {
   id: CampaignType;
   title: string;
@@ -227,6 +253,9 @@ export function CampaignWizard() {
   const [endsAt, setEndsAt] = useState(futureISO(30));
   const [prizes, setPrizes] = useState<PrizeRow[]>(DEFAULT_PRIZES);
 
+  // Coupon Drop discount rules (only sent when selectedType === 'coupon_drop').
+  const [couponRules, setCouponRules] = useState<CouponRules>(DEFAULT_COUPON_RULES);
+
   // Custom UI state
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [tipIndex, setTipIndex] = useState(0);
@@ -350,6 +379,8 @@ export function CampaignWizard() {
         starts_at: new Date(startsAt),
         ends_at: new Date(endsAt),
         prizes,
+        campaign_type: selectedType,
+        coupon_rules: selectedType === "coupon_drop" ? couponRules : undefined,
       });
       if (result.error) {
         setServerError(result.error);
@@ -958,6 +989,167 @@ export function CampaignWizard() {
                   <p className="text-xs text-white/40 mb-2 font-bold uppercase tracking-wider">Sample Code Output</p>
                   <p className="text-3xl font-black text-white tracking-widest">{couponPrefix || "WIN"}-A8B9</p>
                 </div>
+
+                {selectedType === "coupon_drop" && (
+                  <div className="space-y-5 border-t border-neutral-200 pt-6">
+                    <StepHeader
+                      icon={Tag}
+                      title="Shopify Discount Rules"
+                      sub="Each winner gets a unique Shopify discount code with these rules."
+                    />
+
+                    <Field label="Win Mode">
+                      <select
+                        value={couponRules.win_mode}
+                        onChange={(e) =>
+                          setCouponRules({ ...couponRules, win_mode: e.target.value as CouponRules["win_mode"] })
+                        }
+                        className={inputCls}
+                      >
+                        <option value="weighted">Weighted draw (win / lose by prize odds)</option>
+                        <option value="always">Everyone wins a code</option>
+                      </select>
+                    </Field>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <Field label="Discount Type *">
+                        <select
+                          value={couponRules.discount_type}
+                          onChange={(e) =>
+                            setCouponRules({
+                              ...couponRules,
+                              discount_type: e.target.value as CouponRules["discount_type"],
+                            })
+                          }
+                          className={inputCls}
+                        >
+                          <option value="percentage">Percentage off</option>
+                          <option value="fixed_amount">Fixed amount off</option>
+                        </select>
+                      </Field>
+                      <Field
+                        label={couponRules.discount_type === "percentage" ? "Percent Off * (%)" : "Amount Off *"}
+                      >
+                        <input
+                          type="number"
+                          min={0}
+                          value={couponRules.discount_value}
+                          onChange={(e) =>
+                            setCouponRules({ ...couponRules, discount_value: Number(e.target.value) })
+                          }
+                          className={inputCls}
+                        />
+                      </Field>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <Field label="Minimum Order (optional)">
+                        <input
+                          type="number"
+                          min={0}
+                          value={couponRules.minimum_subtotal ?? ""}
+                          onChange={(e) =>
+                            setCouponRules({
+                              ...couponRules,
+                              minimum_subtotal: e.target.value === "" ? null : Number(e.target.value),
+                            })
+                          }
+                          placeholder="No minimum"
+                          className={inputCls}
+                        />
+                      </Field>
+                      <Field label="Uses Per Code (optional)">
+                        <input
+                          type="number"
+                          min={1}
+                          value={couponRules.usage_limit ?? ""}
+                          onChange={(e) =>
+                            setCouponRules({
+                              ...couponRules,
+                              usage_limit: e.target.value === "" ? null : Number(e.target.value),
+                            })
+                          }
+                          placeholder="Unlimited"
+                          className={inputCls}
+                        />
+                      </Field>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <Field label="Code Expiry (days)">
+                        <input
+                          type="number"
+                          min={1}
+                          value={couponRules.expiry_days ?? ""}
+                          onChange={(e) =>
+                            setCouponRules({
+                              ...couponRules,
+                              expiry_days: e.target.value === "" ? null : Number(e.target.value),
+                            })
+                          }
+                          placeholder="Follows campaign end"
+                          className={inputCls}
+                        />
+                      </Field>
+                      <Field label="Currency">
+                        <input
+                          type="text"
+                          value={couponRules.currency}
+                          onChange={(e) =>
+                            setCouponRules({
+                              ...couponRules,
+                              currency: e.target.value.toUpperCase().slice(0, 3),
+                            })
+                          }
+                          className={inputCls}
+                          maxLength={3}
+                        />
+                      </Field>
+                    </div>
+
+                    <label className="flex items-center gap-3 text-sm font-semibold text-neutral-700">
+                      <input
+                        type="checkbox"
+                        checked={couponRules.applies_once_per_customer}
+                        onChange={(e) =>
+                          setCouponRules({ ...couponRules, applies_once_per_customer: e.target.checked })
+                        }
+                        className="size-4 rounded border-neutral-300"
+                      />
+                      Limit to one use per customer
+                    </label>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <Field label="Codes to Pre-generate">
+                        <input
+                          type="number"
+                          min={1}
+                          value={couponRules.pool_target}
+                          onChange={(e) =>
+                            setCouponRules({ ...couponRules, pool_target: Number(e.target.value) })
+                          }
+                          className={inputCls}
+                        />
+                      </Field>
+                      <Field label="Auto-refill When Below">
+                        <input
+                          type="number"
+                          min={0}
+                          value={couponRules.pool_low_watermark}
+                          onChange={(e) =>
+                            setCouponRules({ ...couponRules, pool_low_watermark: Number(e.target.value) })
+                          }
+                          className={inputCls}
+                        />
+                      </Field>
+                    </div>
+
+                    <p className="text-xs text-neutral-500">
+                      Codes are minted in Shopify when you activate the campaign. This requires the
+                      <span className="font-semibold"> write_discounts</span> permission on your connected store.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 

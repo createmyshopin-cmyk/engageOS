@@ -42,9 +42,10 @@ import {
 import { ShopifySyncPanel } from "./shopify-sync-panel";
 
 /**
- * The exact Admin API read scopes the sync engine needs — one per resource it
- * pulls. Shown in the connect instructions so the merchant enables precisely
- * these in their Dev Dashboard app (read-only; EngageOS never writes).
+ * The Admin API scopes EngageOS needs. Mostly read-only for the sync engine (one
+ * per resource it pulls); `write_discounts` is the sole write scope, required so
+ * Coupon Drop campaigns can mint unique discount codes. Shown in the connect
+ * instructions so the merchant enables precisely these in their Dev Dashboard app.
  */
 const REQUIRED_SCOPES: Array<{ handle: string; for: string }> = [
   { handle: "read_products", for: "Products" },
@@ -54,6 +55,7 @@ const REQUIRED_SCOPES: Array<{ handle: string; for: string }> = [
   { handle: "read_locations", for: "Store locations (inventory)" },
   { handle: "read_price_rules", for: "Discounts / price rules" },
   { handle: "read_discounts", for: "Discount codes" },
+  { handle: "write_discounts", for: "Coupon Drop discount codes" },
 ];
 
 function formatMoney(n: number): string {

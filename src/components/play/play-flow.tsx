@@ -92,6 +92,15 @@ function inr(value: number | null): string {
   return `₹${Number.isInteger(value) ? value.toLocaleString("en-IN") : value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** Human-readable host for a store URL (falls back to the raw value). */
+function prettyHost(url: string): string {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Type-aware reveal copy. The scratch card and win animation stay the
  * same for every prize type; only the instruction line branches so each
@@ -99,6 +108,17 @@ function inr(value: number | null): string {
  */
 function claimInstruction(result: WinResult, endsAt: string): { primary: string; secondary?: string } {
   const type: PrizeType = result.prize_type;
+  // Coupon Drop: the code is redeemable online at the merchant's Shopify store.
+  if (result.redeem_online && hasCode(type)) {
+    return {
+      primary: result.discount_summary
+        ? `🛍️ ${result.discount_summary} — use this code at checkout.`
+        : "🛍️ Use this code at checkout to redeem your discount.",
+      secondary: result.store_url
+        ? `Shop now at ${prettyHost(result.store_url)}.`
+        : "Copy the code and apply it in your cart.",
+    };
+  }
   switch (type) {
     case "physical_gift":
       return { primary: "🎁 Show this screen at the counter to collect your gift." };
@@ -563,6 +583,22 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
                           month: "short",
                         })}
                       </p>
+                    )}
+                    {result.redeem_online && result.store_url && (
+                      <a
+                        href={result.store_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() =>
+                          track("shop_now_clicked", {
+                            destination: "product",
+                            url: result.store_url,
+                          })
+                        }
+                        className="mt-3 inline-block rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white active:bg-amber-700"
+                      >
+                        Shop now →
+                      </a>
                     )}
                   </div>
                   {display.redirect?.enabled &&

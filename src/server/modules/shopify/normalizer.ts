@@ -41,6 +41,7 @@ interface RawShopifyOrder {
   billing_address?: { phone?: string | null } | null;
   shipping_address?: { phone?: string | null } | null;
   line_items?: RawLineItem[];
+  discount_codes?: Array<{ code?: string; amount?: string; type?: string } | string>;
 }
 
 export interface NormalizedOrder {
@@ -66,6 +67,8 @@ export interface NormalizedOrder {
     price: string;
     total_discount: string;
   }>;
+  /** Uppercased discount codes applied to the order (used for coupon attribution). */
+  discount_codes: string[];
   raw: Record<string, unknown>;
 }
 
@@ -109,6 +112,18 @@ export function normalizeShopifyOrder(payload: unknown): NormalizedOrder {
       price: str(li.price) ?? "0",
       total_discount: str(li.total_discount) ?? "0",
     })),
+    discount_codes: extractDiscountCodes(o),
     raw: (payload ?? {}) as Record<string, unknown>,
   };
+}
+
+/** Normalize the applied discount codes to a deduped, uppercased, trimmed list. */
+function extractDiscountCodes(o: RawShopifyOrder): string[] {
+  const seen = new Set<string>();
+  for (const entry of o.discount_codes ?? []) {
+    const raw = typeof entry === "string" ? entry : entry?.code;
+    const code = str(raw)?.trim().toUpperCase();
+    if (code) seen.add(code);
+  }
+  return Array.from(seen);
 }

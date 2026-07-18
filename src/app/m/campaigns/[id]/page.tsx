@@ -30,7 +30,7 @@ export default async function CampaignDetailPage({ params }: PageProps) {
   // Tenant-isolated: campaign must belong to this merchant's business.
   const campaign = await repo.getCampaign<Campaign>(
     id,
-    "id, name, slug, headline, description, banner_url, logo_url, terms, coupon_prefix, status, starts_at, ends_at, created_at, business_id, redirect_enabled, redirect_delay, redirect_destination_type, redirect_url, exp_preloader_enabled, exp_preloader_duration, exp_confetti_enabled, exp_sound_enabled, exp_haptics_enabled, exp_open_native_app, exp_show_countdown, exp_allow_skip, exp_button_text, exp_theme"
+    "id, name, slug, headline, description, banner_url, logo_url, terms, coupon_prefix, status, campaign_type, starts_at, ends_at, created_at, business_id, redirect_enabled, redirect_delay, redirect_destination_type, redirect_url, exp_preloader_enabled, exp_preloader_duration, exp_confetti_enabled, exp_sound_enabled, exp_haptics_enabled, exp_open_native_app, exp_show_countdown, exp_allow_skip, exp_button_text, exp_theme"
   );
 
   if (!campaign) notFound();
@@ -95,6 +95,11 @@ export default async function CampaignDetailPage({ params }: PageProps) {
     "name, city"
   );
 
+  const couponDropStats =
+    campaign.campaign_type === "coupon_drop"
+      ? await repo.couponDropStats(id)
+      : null;
+
   return (
     <MerchantShell businessName={business?.name ?? session.name} city={business?.city ?? null} campaignActive={campaign.status === "active"}>
       {/* Back */}
@@ -154,6 +159,39 @@ export default async function CampaignDetailPage({ params }: PageProps) {
         redirectStats={redirectStats}
       />
 
+      {couponDropStats && (
+        <div className="rounded-2xl border border-[#E5E7EB] bg-white shadow-sm overflow-hidden mt-6">
+          <div className="px-5 py-4 border-b border-[#E5E7EB] flex items-center justify-between">
+            <h3 className="text-sm font-black text-[#111827]">Coupon Drop — Shopify Discount Codes</h3>
+            {couponDropStats.fallback_issued > 0 && (
+              <span className="text-[11px] font-semibold text-amber-600">
+                {couponDropStats.fallback_issued} fallback code{couponDropStats.fallback_issued === 1 ? "" : "s"} need reconciliation
+              </span>
+            )}
+          </div>
+          <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <HealthStat label="Codes Minted" value={couponDropStats.codes_minted} />
+            <HealthStat label="Available" value={couponDropStats.codes_available} />
+            <HealthStat label="Claimed" value={couponDropStats.codes_claimed} />
+            <HealthStat label="Redeemed" value={couponDropStats.codes_redeemed} />
+            <HealthStat label="Orders Attributed" value={couponDropStats.orders_attributed} />
+            <div>
+              <div className="text-xl font-black text-emerald-600">
+                {formatCurrency(couponDropStats.gross_sales_attributed, couponDropStats.currency)}
+              </div>
+              <div className="text-[11px] text-neutral-500 font-semibold mt-0.5">Gross Sales</div>
+            </div>
+            <div>
+              <div className="text-xl font-black text-neutral-900">
+                {formatCurrency(couponDropStats.avg_order_value, couponDropStats.currency)}
+              </div>
+              <div className="text-[11px] text-neutral-500 font-semibold mt-0.5">Avg Order Value</div>
+            </div>
+            <HealthStat label="Fallback Issued" value={couponDropStats.fallback_issued} />
+          </div>
+        </div>
+      )}
+
       {/* Campaign Timeline + Health — from the immutable campaign_events log */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
         <div className="lg:col-span-2">
@@ -182,6 +220,18 @@ export default async function CampaignDetailPage({ params }: PageProps) {
       </div>
     </MerchantShell>
   );
+}
+
+function formatCurrency(amount: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amount);
+  } catch {
+    return `${currency} ${Math.round(amount).toLocaleString("en-IN")}`;
+  }
 }
 
 function HealthStat({ label, value }: { label: string; value: number }) {
