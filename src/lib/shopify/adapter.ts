@@ -1,5 +1,5 @@
 import "server-only";
-import { ShopifyClient } from "@/lib/shopify/client";
+import { ShopifyApiError, ShopifyClient } from "@/lib/shopify/client";
 import { decryptSecret, encryptSecret } from "@/lib/wacrm/crypto";
 import { deleteShop, getShop, setShopStatus, upsertShop } from "@/lib/shopify/store";
 import type { ShopifyShop } from "@/lib/shopify/types";
@@ -107,6 +107,97 @@ export async function connectShopify(
   }
 
   return { ok: true, webhooksRegistered: registered };
+}
+
+export interface CredentialConnectResult extends ConnectResult {
+  shopName: string;
+  scopes: string;
+}
+
+/**
+ * Connect a store via a merchant-supplied CUSTOM APP (multi-tenant model — no
+ * global OAuth app). The merchant creates a custom app inside their own Shopify
+ * admin, then pastes its Admin API access token (`shpat_…`) and API secret key.
+ *
+ * We do NOT trust the credentials blindly: the token is validated against the
+ * live Shopify Admin API (`shop.json`) before anything is persisted, so a typo
+ * or expired token fails fast with a clear message. On success both secrets are
+ * AES-256-GCM encrypted before touching the DB, webhooks are registered
+ * best-effort, and the granted scopes are recorded so the sync engine only
+ * enqueues resources the token can actually read.
+ *
+ * `businessId` is the authenticated tenant (from the session) — never input.
+ */
+export async function connectWithCredentials(
+  businessId: string,
+  shopDomain: string,
+  accessToken: string,
+  apiSecret: string
+): Promise<CredentialConnectResult> {
+  const domain = shopDomain.trim().toLowerCase();
+  const client = new ShopifyClient(domain, accessToken);
+
+  // 1. Validate the token against the live API before persisting anything.
+  let shopName = "";
+  try {
+    const info = await client.getShopInfo();
+    shopName = info.name;
+  } catch (err) {
+    if (err instanceof ShopifyApiError && err.isAuthError) {
+      throw new Error(
+        "Shopify rejected the access token. Check it was copied in full and the app is installed."
+      );
+    }
+    if (err instanceof ShopifyApiError && err.status === 404) {
+      throw new Error("That store domain was not found. Check the myshopify.com domain.");
+    }
+    throw new Error(
+      `Could not reach the store: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  // 2. Read granted scopes (best-effort — a custom app may not expose them).
+  let scopes = "";
+  try {
+    scopes = await client.getAccessScopes();
+  } catch {
+    scopes = "";
+  }
+
+  // 3. Persist encrypted credentials. The API secret is stored as the per-shop
+  //    webhook HMAC secret so inbound webhooks verify against THIS store's key
+  //    (custom apps sign webhooks with the app's own secret, not an app-wide one).
+  await upsertShop(businessId, {
+    shop_domain: domain,
+    access_token_enc: encryptSecret(accessToken),
+    webhook_secret_enc: apiSecret ? encryptSecret(apiSecret) : null,
+    scopes,
+    status: "active",
+  });
+
+  // 4. Register webhooks best-effort (a non-https deploy still connects).
+  let registered = 0;
+  const address = webhookAddress();
+  if (address) {
+    let existing: Set<string>;
+    try {
+      const hooks = await client.listWebhooks();
+      existing = new Set(hooks.filter((h) => h.address === address).map((h) => h.topic));
+    } catch {
+      existing = new Set();
+    }
+    for (const topic of WEBHOOK_TOPICS) {
+      if (existing.has(topic)) continue;
+      try {
+        const id = await client.createWebhook(topic, address);
+        if (id) registered += 1;
+      } catch (err) {
+        console.error(`Shopify webhook registration failed for ${topic}:`, err);
+      }
+    }
+  }
+
+  return { ok: true, webhooksRegistered: registered, shopName, scopes };
 }
 
 /**

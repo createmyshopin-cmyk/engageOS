@@ -4,18 +4,19 @@
  * ShopifyView — the merchant's Shopify surface for `/m/shopify`.
  *
  * Two states, driven by the read-model overview (`/api/v1/shopify/overview`):
- *   - DISCONNECTED → a connect form that normalizes a `*.myshopify.com` domain
- *     and navigates to `/api/shopify/install` (top-level nav → Shopify OAuth).
+ *   - DISCONNECTED → a custom-app connect form. The merchant creates a custom
+ *     app in their OWN Shopify admin and pastes its domain + Admin API access
+ *     token + API secret. These are POSTed once to `/api/v1/shopify/connect`,
+ *     validated + encrypted server-side (never returned). Multi-tenant: each
+ *     merchant brings their own app — there is no global OAuth app.
  *   - CONNECTED → ingestion totals + the operational Sync Engine dashboard
  *     (`ShopifySyncPanel`), plus a disconnect control inside the panel.
  *
  * All data flows through the `use-shopify` React Query hooks; no direct fetch,
  * no DB access, no tenant id sent (the v1 guard derives it from the session).
- * The OAuth install is a browser navigation, never a mutation, so tokens are
- * never handled client-side.
  */
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -29,21 +30,11 @@ import {
   Loader2,
   ArrowRight,
   X,
+  KeyRound,
+  ExternalLink,
 } from "lucide-react";
-import { useShopifyOverview } from "@/lib/api/hooks/use-shopify";
+import { useShopifyOverview, useConnectShopify } from "@/lib/api/hooks/use-shopify";
 import { ShopifySyncPanel } from "./shopify-sync-panel";
-
-const SHOP_DOMAIN_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
-
-/** Accept `mystore` or `mystore.myshopify.com`; return a normalized domain or null. */
-function normalizeShopInput(raw: string): string | null {
-  let v = raw.trim().toLowerCase();
-  if (!v) return null;
-  // Strip a pasted URL down to its host.
-  v = v.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  if (!v.includes(".")) v = `${v}.myshopify.com`;
-  return SHOP_DOMAIN_RE.test(v) ? v : null;
-}
 
 function formatMoney(n: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -176,64 +167,165 @@ export function ShopifyView() {
 }
 
 function ConnectForm() {
-  const [value, setValue] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const normalized = useMemo(() => normalizeShopInput(value), [value]);
-  const showError = value.trim().length > 0 && !normalized;
+  const connect = useConnectShopify();
+  const [shopDomain, setShopDomain] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [apiSecret, setApiSecret] = useState("");
 
-  function connect() {
-    if (!normalized) return;
-    setSubmitting(true);
-    // Top-level navigation — the install route creates the OAuth state and
-    // redirects to Shopify. Never a fetch: tokens must not touch the client.
-    window.location.href = `/api/shopify/install?shop=${encodeURIComponent(normalized)}`;
+  const canSubmit =
+    shopDomain.trim().length > 0 &&
+    accessToken.trim().length > 0 &&
+    apiSecret.trim().length > 0 &&
+    !connect.isPending;
+
+  function submit() {
+    if (!canSubmit) return;
+    connect.mutate({
+      shopDomain: shopDomain.trim(),
+      accessToken: accessToken.trim(),
+      apiSecret: apiSecret.trim(),
+    });
   }
 
+  const errorMsg =
+    connect.error instanceof Error
+      ? connect.error.message
+      : connect.isError
+        ? "Could not connect the store. Check the credentials and try again."
+        : null;
+
   return (
-    <div className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm p-6">
-      <p className="text-sm font-black text-neutral-900">Connect your Shopify store</p>
-      <p className="text-[11px] font-semibold text-neutral-500 mt-1">
-        You&apos;ll be redirected to Shopify to authorize access. We only request the scopes needed
-        to sync your catalog and orders.
-      </p>
-      <form
-        className="mt-4 flex flex-col sm:flex-row gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          connect();
-        }}
-      >
-        <div className="flex-1">
-          <input
-            type="text"
-            inputMode="url"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            placeholder="your-store.myshopify.com"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            className={`w-full rounded-xl border px-3.5 py-2.5 text-sm font-semibold text-neutral-900 placeholder:text-neutral-300 outline-none transition ${
-              showError
-                ? "border-red-300 focus:border-red-400"
-                : "border-neutral-200 focus:border-neutral-400"
-            }`}
-          />
-          {showError && (
-            <p className="text-[10px] font-semibold text-red-500 mt-1">
-              Enter a valid myshopify.com domain (e.g. your-store.myshopify.com).
+    <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+      {/* The form */}
+      <div className="lg:col-span-3 bg-white rounded-3xl border border-neutral-200/80 shadow-sm p-6">
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center justify-center size-9 rounded-xl bg-emerald-50 text-emerald-600">
+            <KeyRound className="size-4.5" />
+          </div>
+          <div>
+            <p className="text-sm font-black text-neutral-900">Connect your Shopify store</p>
+            <p className="text-[11px] font-semibold text-neutral-500">
+              Paste your custom app credentials — they&apos;re encrypted and never leave our server.
             </p>
-          )}
+          </div>
         </div>
-        <button
-          type="submit"
-          disabled={!normalized || submitting}
-          className="inline-flex items-center justify-center gap-2 bg-neutral-900 text-white text-xs font-bold px-5 py-2.5 rounded-xl hover:bg-neutral-800 transition disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+
+        <form
+          className="mt-5 space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            submit();
+          }}
         >
-          {submitting ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowRight className="size-3.5" />}
-          Connect store
-        </button>
-      </form>
+          <Field
+            label="Store domain"
+            hint="e.g. your-store.myshopify.com"
+            value={shopDomain}
+            onChange={setShopDomain}
+            placeholder="your-store.myshopify.com"
+            type="text"
+          />
+          <Field
+            label="Admin API access token"
+            hint="Starts with shpat_ — from Apps → Develop apps → your app → API credentials"
+            value={accessToken}
+            onChange={setAccessToken}
+            placeholder="shpat_••••••••••••••••••••••••••••••••"
+            type="password"
+          />
+          <Field
+            label="API secret key"
+            hint="Same page, under “API secret key”. Used to verify webhooks from your store."
+            value={apiSecret}
+            onChange={setApiSecret}
+            placeholder="••••••••••••••••••••••••••••••••"
+            type="password"
+          />
+
+          {errorMsg && (
+            <div className="flex items-start gap-2 rounded-xl border border-red-100 bg-red-50 p-3">
+              <AlertTriangle className="size-4 shrink-0 mt-0.5 text-red-500" />
+              <p className="text-[11px] font-bold text-red-600 break-words">{errorMsg}</p>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="inline-flex items-center justify-center gap-2 bg-neutral-900 text-white text-xs font-bold px-5 py-2.5 rounded-xl hover:bg-neutral-800 transition disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
+          >
+            {connect.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <ArrowRight className="size-3.5" />
+            )}
+            {connect.isPending ? "Verifying with Shopify…" : "Connect store"}
+          </button>
+        </form>
+      </div>
+
+      {/* Setup instructions */}
+      <div className="lg:col-span-2 bg-neutral-50 rounded-3xl border border-neutral-200/80 p-6">
+        <p className="text-xs font-black text-neutral-900">How to get these</p>
+        <ol className="mt-3 space-y-2.5">
+          {[
+            "In your Shopify admin, go to Settings → Apps and sales channels → Develop apps.",
+            "Click “Create an app”, name it (e.g. EngageOS), then open Configuration.",
+            "Under Admin API scopes, enable read access for products, orders, customers, inventory and discounts. Save.",
+            "Open the API credentials tab and click “Install app”.",
+            "Copy the Admin API access token (shown once) and the API secret key into this form.",
+          ].map((step, i) => (
+            <li key={i} className="flex gap-2.5">
+              <span className="flex items-center justify-center size-5 shrink-0 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-black">
+                {i + 1}
+              </span>
+              <span className="text-[11px] font-semibold text-neutral-600 leading-relaxed">{step}</span>
+            </li>
+          ))}
+        </ol>
+        <a
+          href="https://help.shopify.com/en/manual/apps/app-types/custom-apps"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 transition"
+        >
+          Shopify custom-app guide <ExternalLink className="size-3" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  value,
+  onChange,
+  placeholder,
+  type,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  type: "text" | "password";
+}) {
+  return (
+    <div>
+      <label className="block text-[11px] font-black text-neutral-700">{label}</label>
+      <input
+        type={type}
+        inputMode={type === "text" ? "url" : undefined}
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3.5 py-2.5 text-sm font-semibold text-neutral-900 placeholder:text-neutral-300 outline-none transition focus:border-neutral-400"
+      />
+      <p className="text-[10px] font-medium text-neutral-400 mt-1">{hint}</p>
     </div>
   );
 }

@@ -93,6 +93,42 @@ export class ShopifyClient {
     return (await res.json()) as T;
   }
 
+  /**
+   * Fetch the shop record — the cheapest authenticated call, used to validate a
+   * pasted Admin API token at connect time. A bad/expired token throws a
+   * ShopifyApiError with `isAuthError` true (401/403); a wrong domain throws a
+   * 404 or network error. Returns the store's identity fields on success.
+   */
+  async getShopInfo(): Promise<{ id: number; name: string; domain: string; email: string | null }> {
+    const body = await this.get<{
+      shop?: { id?: number; name?: string; domain?: string; myshopify_domain?: string; email?: string };
+    }>("shop");
+    const shop = body.shop ?? {};
+    return {
+      id: Number(shop.id ?? 0),
+      name: String(shop.name ?? ""),
+      domain: String(shop.myshopify_domain ?? shop.domain ?? this.shopDomain),
+      email: shop.email ?? null,
+    };
+  }
+
+  /**
+   * Read the access scopes the merchant granted this token. Custom apps mint a
+   * token with a fixed scope set chosen in the store admin; we record it so the
+   * sync engine only enqueues resources the token can actually read. Uses the
+   * unversioned oauth endpoint. Returns a comma-joined scope string ("" if none).
+   */
+  async getAccessScopes(): Promise<string> {
+    const res = await this.fetch(
+      `https://${this.shopDomain}/admin/oauth/access_scopes.json`
+    );
+    const body = (await res.json()) as { access_scopes?: Array<{ handle?: string }> };
+    return (body.access_scopes ?? [])
+      .map((s) => s.handle)
+      .filter((h): h is string => !!h)
+      .join(",");
+  }
+
   /** Total count for a resource (Shopify `/count` endpoints) — for progress. */
   async count(resourcePath: string, extra: Record<string, string> = {}): Promise<number> {
     const url = new URL(`${this.base}/${resourcePath}/count.json`);

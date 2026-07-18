@@ -13,9 +13,10 @@
  * which wrap the typed `apiClient` and centralize query keys + invalidation. The
  * client NEVER sends a tenant id — the v1 guard derives it from the session.
  *
- * OAuth install is deliberately NOT a mutation here: connecting a store is a
- * top-level browser navigation to `/api/shopify/install` (it redirects to
- * Shopify), so the UI links to it rather than fetching it.
+ * Connecting a store uses the CUSTOM-APP model (multi-tenant): the merchant
+ * pastes their own Shopify custom app's Admin API token + secret, which are
+ * POSTed once to `/api/v1/shopify/connect`, validated + encrypted server-side,
+ * and never returned. There is no global OAuth app.
  */
 
 import {
@@ -105,6 +106,35 @@ export function useTriggerShopifySync() {
       // Jobs are now queued/running — refresh the bundle so progress appears and
       // polling kicks in.
       qc.invalidateQueries({ queryKey: shopifyKeys.sync() });
+    },
+  });
+}
+
+export interface ConnectShopifyInput {
+  shopDomain: string;
+  accessToken: string;
+  apiSecret: string;
+}
+
+export interface ConnectShopifyResult {
+  connected: true;
+  shopDomain: string;
+  shopName: string;
+}
+
+/**
+ * Connect a store from merchant-supplied custom-app credentials (multi-tenant).
+ * The token + secret are POSTed once over TLS to the server, which validates the
+ * token against Shopify, encrypts both, and stores them per-tenant. On success
+ * every Shopify query is invalidated so the UI flips to the connected surface.
+ */
+export function useConnectShopify() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ConnectShopifyInput) =>
+      apiClient.post<ConnectShopifyResult>("/api/v1/shopify/connect", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: shopifyKeys.all });
     },
   });
 }
