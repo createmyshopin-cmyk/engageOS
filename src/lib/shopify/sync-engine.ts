@@ -1,21 +1,21 @@
 import "server-only";
 import { ShopifyApiError, type ShopifyClient } from "@/lib/shopify/client";
-import { getShopifyForBusiness, markUninstalled } from "@/lib/shopify/adapter";
+import { getShopifyForBusiness } from "@/lib/shopify/adapter";
 import {
   claimNextSyncJob,
   completeSyncJob,
   failSyncJob,
   getSyncJob,
   getSyncStateWatermark,
-  ingestOrder,
+  ingestOrdersBatch,
   requeueSyncJobForContinuation,
   startSyncJob,
   updateSyncProgress,
-  upsertCollection,
-  upsertCustomer,
-  upsertDiscount,
-  upsertInventory,
-  upsertProduct,
+  upsertCollectionsBatch,
+  upsertCustomersBatch,
+  upsertDiscountsBatch,
+  upsertInventoryBatch,
+  upsertProductsBatch,
 } from "@/lib/shopify/store";
 import {
   normalizeCollection,
@@ -31,17 +31,20 @@ import type { ShopifySyncJob, SyncResource } from "@/lib/shopify/types";
 /**
  * The Shopify Sync Engine — the outbound pull layer.
  *
- * A job is driven start → (page → upsert → persist-cursor)* → complete|fail.
- * Every page persists its resume cursor + counters BEFORE fetching the next, so
- * an interrupted run (deploy, timeout, crash) resumes from `job.cursor` on the
- * next scheduler tick — jobs are resumable by construction.
+ * A job is driven start → (page → batch-upsert → persist-cursor)* → complete|fail.
+ * Every page is persisted in ONE batch RPC (a JSONB array of up to PAGE_SIZE
+ * rows), then its resume cursor + counters are persisted BEFORE fetching the
+ * next page, so an interrupted run (deploy, timeout, crash) resumes from
+ * `job.cursor` on the next scheduler tick — jobs are resumable by construction.
  *
  * Idempotency: every upsert lands on a tenant-scoped external-id key, so
  * re-processing a page (after a resume) is a no-op, never a duplicate.
  *
  * Errors:
  *   - 429 rate limit  → sleep for Retry-After, then continue the same page.
- *   - 401/403 auth    → the token is dead; mark the shop revoked and fail hard.
+ *   - 401/403 auth    → surface reconnect need and fail the job; the shop is
+ *                       NEVER auto-revoked here (only the app/uninstalled webhook
+ *                       or an explicit merchant disconnect may disconnect).
  *   - anything else    → bubble to the job's retry/backoff (shopify_fail_sync_job).
  *
  * Bounded work per invocation: a single `after()` slice processes up to
@@ -53,13 +56,14 @@ const PAGE_SIZE = 250;
 const MAX_PAGES_PER_SLICE = 40; // ~10k records/slice; bounds one invocation
 const MAX_RATE_LIMIT_SLEEP_MS = 10_000;
 
-/** Per-resource wiring: REST path, JSON key, normalizer, upsert fn. */
+/** Per-resource wiring: REST path, JSON key, normalizer, batch upsert fn. */
 interface ResourceSpec {
   path: string;
   key: string;
   countPath?: string;
   normalize: (row: Record<string, unknown>) => Record<string, unknown>;
-  upsert: (businessId: string, payload: unknown) => Promise<void>;
+  /** Persist a whole page at once (one RPC per page, not per row). Returns count. */
+  upsertBatch: (businessId: string, rows: unknown[]) => Promise<number>;
   /** Incremental sync supported (resource exposes updated_at_min). */
   incremental: boolean;
 }
@@ -72,7 +76,7 @@ function specFor(resource: SyncResource): ResourceSpec | null {
         key: "products",
         countPath: "products",
         normalize: normalizeProduct,
-        upsert: upsertProduct,
+        upsertBatch: upsertProductsBatch,
         incremental: true,
       };
     case "orders":
@@ -81,7 +85,7 @@ function specFor(resource: SyncResource): ResourceSpec | null {
         key: "orders",
         countPath: "orders",
         normalize: (o) => normalizeShopifyOrder(o) as unknown as Record<string, unknown>,
-        upsert: ingestOrder,
+        upsertBatch: ingestOrdersBatch,
         incremental: true,
       };
     case "customers":
@@ -90,7 +94,7 @@ function specFor(resource: SyncResource): ResourceSpec | null {
         key: "customers",
         countPath: "customers",
         normalize: normalizeCustomer,
-        upsert: upsertCustomer,
+        upsertBatch: upsertCustomersBatch,
         incremental: true,
       };
     case "collections":
@@ -100,7 +104,7 @@ function specFor(resource: SyncResource): ResourceSpec | null {
         key: "custom_collections",
         countPath: "custom_collections",
         normalize: (c) => normalizeCollection({ ...c, collection_type: "custom" }),
-        upsert: upsertCollection,
+        upsertBatch: upsertCollectionsBatch,
         incremental: false,
       };
     case "discounts":
@@ -109,7 +113,7 @@ function specFor(resource: SyncResource): ResourceSpec | null {
         key: "price_rules",
         countPath: "price_rules",
         normalize: normalizeDiscount,
-        upsert: upsertDiscount,
+        upsertBatch: upsertDiscountsBatch,
         incremental: false,
       };
     case "inventory":
@@ -166,8 +170,12 @@ export async function runSyncJob(job: ShopifySyncJob): Promise<void> {
     }
   } catch (err) {
     if (err instanceof ShopifyApiError && err.isAuthError) {
-      // Token revoked / scope lost — stop retrying and surface reconnect need.
-      await markUninstalled(job.business_id);
+      // A 401/403 here is transient more often than not — a token caught
+      // mid-refresh, a brief scope hiccup, Shopify hiccuping. It does NOT mean
+      // the merchant uninstalled. We surface the failure so the next run (or
+      // the merchant) can react, but we NEVER flip the store to revoked here:
+      // only the genuine `app/uninstalled` webhook or an explicit merchant
+      // disconnect may disconnect a connected store.
       await failSyncJob(job.business_id, job.id, `Auth failed: ${err.message}`);
       log.error("shopify.sync.auth_failed", { status: err.status });
       return;
@@ -250,18 +258,28 @@ async function runPaginated(
       log
     );
 
-    for (const row of pageResult.items) {
-      try {
-        await spec.upsert(job.business_id, spec.normalize(row));
-        processed += 1;
-        const u = row.updated_at;
-        if (typeof u === "string" && (!newestUpdatedAt || u > newestUpdatedAt)) newestUpdatedAt = u;
-      } catch (err) {
-        failed += 1;
-        log.warn("shopify.sync.row_failed", {
-          err: err instanceof Error ? err.message : String(err),
-        });
-      }
+    // Normalize the whole page, then persist it in ONE batch RPC (not per row).
+    // The scan for the newest updated_at runs over the normalized rows here so
+    // the watermark advances exactly as before, minus 249 round-trips.
+    const rows = pageResult.items.map((row) => {
+      const normalized = spec.normalize(row);
+      const u = row.updated_at;
+      if (typeof u === "string" && (!newestUpdatedAt || u > newestUpdatedAt)) newestUpdatedAt = u;
+      return normalized;
+    });
+
+    try {
+      await spec.upsertBatch(job.business_id, rows);
+      processed += rows.length;
+    } catch (err) {
+      // A batch commits its whole page or throws. Auth errors bubble to
+      // runSyncJob (which never revokes the store); other errors fail the job
+      // for retry. Pages are idempotent, so a retried page re-upserts harmlessly.
+      if (err instanceof ShopifyApiError) throw err;
+      failed += rows.length;
+      log.warn("shopify.sync.page_failed", {
+        err: err instanceof Error ? err.message : String(err),
+      });
     }
 
     cursor = pageResult.nextPageInfo;
@@ -313,16 +331,16 @@ async function runInventory(
           }),
         log
       );
-      for (const row of pageResult.items) {
-        try {
-          await upsertInventory(job.business_id, normalizeInventoryLevel(row));
-          processed += 1;
-        } catch (err) {
-          failed += 1;
-          log.warn("shopify.sync.row_failed", {
-            err: err instanceof Error ? err.message : String(err),
-          });
-        }
+      const invRows = pageResult.items.map((row) => normalizeInventoryLevel(row));
+      try {
+        await upsertInventoryBatch(job.business_id, invRows);
+        processed += invRows.length;
+      } catch (err) {
+        if (err instanceof ShopifyApiError) throw err;
+        failed += invRows.length;
+        log.warn("shopify.sync.page_failed", {
+          err: err instanceof Error ? err.message : String(err),
+        });
       }
       cursor = pageResult.nextPageInfo;
       await updateSyncProgress(job.business_id, job.id, {

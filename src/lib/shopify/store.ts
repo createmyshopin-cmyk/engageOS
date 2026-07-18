@@ -324,3 +324,37 @@ export async function ingestOrder(businessId: string, order: unknown): Promise<v
   });
   if (error) throw new Error(`shopify_ingest_order failed: ${error.message}`);
 }
+
+// ---------- Batch upsert helpers (one RPC per page, not per row) ----------
+// Each sends a whole page as a JSONB array to the 0042 *_batch RPC, which loops
+// in-database over the existing singular RPC. This collapses ~250 PostgREST
+// round-trips per page into ONE — the dominant sync-speed win. Returns the count
+// of rows the RPC processed. Empty pages short-circuit without a call.
+
+async function callUpsertBatch(
+  fn: string,
+  businessId: string,
+  payloadKey: string,
+  rows: unknown[]
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const { data, error } = await adminClient().rpc(fn, {
+    p_business_id: businessId,
+    [payloadKey]: rows,
+  });
+  if (error) throw new Error(`${fn} failed: ${error.message}`);
+  return Number(data) || 0;
+}
+
+export const upsertProductsBatch = (b: string, rows: unknown[]) =>
+  callUpsertBatch("shopify_upsert_products_batch", b, "p_products", rows);
+export const upsertCollectionsBatch = (b: string, rows: unknown[]) =>
+  callUpsertBatch("shopify_upsert_collections_batch", b, "p_collections", rows);
+export const upsertDiscountsBatch = (b: string, rows: unknown[]) =>
+  callUpsertBatch("shopify_upsert_discounts_batch", b, "p_discounts", rows);
+export const upsertInventoryBatch = (b: string, rows: unknown[]) =>
+  callUpsertBatch("shopify_upsert_inventory_batch", b, "p_inventory", rows);
+export const upsertCustomersBatch = (b: string, rows: unknown[]) =>
+  callUpsertBatch("shopify_upsert_customers_batch", b, "p_customers", rows);
+export const ingestOrdersBatch = (b: string, rows: unknown[]) =>
+  callUpsertBatch("shopify_ingest_orders_batch", b, "p_orders", rows);

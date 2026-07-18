@@ -23,21 +23,32 @@ export const maxDuration = 300;
  *      budget is spent, so the work is resumable across ticks and horizontally
  *      scalable across overlapping invocations.
  *
- * Auth: a shared secret via `x-cron-secret`, compared in constant time. If the
- * secret isn't configured the route returns 503 (fail-closed, never open).
- * There is no tenant context here — the scheduler is a system worker; every
- * job it runs is already bound to its own business_id in the DB.
+ * Auth: a shared secret, compared in constant time, accepted two ways so the
+ * same endpoint works for both drivers:
+ *   - Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` (it cannot set a
+ *     custom header), matched against `CRON_SECRET`.
+ *   - An external pinger sends `x-cron-secret: <secret>`, matched against
+ *     `SHOPIFY_CRON_SECRET`.
+ * If neither secret is configured the route returns 503 (fail-closed, never
+ * open). There is no tenant context here — the scheduler is a system worker;
+ * every job it runs is already bound to its own business_id in the DB.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const log = createLogger(newCorrelationId(), { route: "shopify.cron" });
 
-  const expected = process.env.SHOPIFY_CRON_SECRET;
-  if (!expected) {
+  const headerSecret = process.env.SHOPIFY_CRON_SECRET;
+  const bearerSecret = process.env.CRON_SECRET;
+  if (!headerSecret && !bearerSecret) {
     log.warn("shopify.cron.not_configured");
     return NextResponse.json({ ok: false, error: "cron not configured" }, { status: 503 });
   }
-  const supplied = request.headers.get("x-cron-secret") ?? "";
-  if (!constantTimeEqual(supplied, expected)) {
+
+  const suppliedHeader = request.headers.get("x-cron-secret") ?? "";
+  const suppliedBearer = (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const authorized =
+    (!!headerSecret && constantTimeEqual(suppliedHeader, headerSecret)) ||
+    (!!bearerSecret && constantTimeEqual(suppliedBearer, bearerSecret));
+  if (!authorized) {
     log.warn("shopify.cron.unauthorized");
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
