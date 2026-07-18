@@ -64,18 +64,45 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
         name: parsed.data.name,
         result,
       });
-      // Coupon Drop: self-heal the code pool if this win drew it low. Keyed only
-      // by campaign_id (business resolved server-side); no-op for other types.
-      if (result.status === "ok" && result.won && result.campaign_id) {
-        const campaignId = result.campaign_id;
+      // Coupon Drop: mint the customer's code in Shopify in real time, against
+      // the won tier's parent discount, then link it to the coupon row. Runs off
+      // the response path (reveal is already sent). On any failure the customer
+      // keeps the internal fallback code play_campaign already issued.
+      if (
+        result.status === "ok" &&
+        result.won &&
+        result.campaign_id &&
+        result.prize_id &&
+        result.coupon_id &&
+        result.coupon_code
+      ) {
+        const mintArgs = {
+          campaignId: result.campaign_id,
+          prizeId: result.prize_id,
+          couponId: result.coupon_id,
+          code: result.coupon_code,
+          parentGid: result.shopify_parent_discount_id ?? null,
+        };
         void (async () => {
           try {
-            const { topUpPoolForCampaign } = await import(
+            const { mintCouponForWin } = await import(
               "@/lib/shopify/coupon-drop-orchestrator"
             );
-            await topUpPoolForCampaign(campaignId);
+            // Resolve the owning business from the campaign config, server-side.
+            const { adminClient } = await import("@/lib/db/rpc");
+            const { data } = await adminClient()
+              .from("campaign_coupon_configs")
+              .select("business_id")
+              .eq("campaign_id", mintArgs.campaignId)
+              .maybeSingle();
+            const businessId = (data as { business_id: string } | null)?.business_id;
+            if (!businessId) {
+              // Not a coupon_drop campaign (or no config) — nothing to mint.
+              return;
+            }
+            await mintCouponForWin({ businessId, ...mintArgs });
           } catch (err) {
-            console.error("coupon pool top-up error:", err);
+            console.error("coupon real-time mint error:", err);
           }
         })();
       }

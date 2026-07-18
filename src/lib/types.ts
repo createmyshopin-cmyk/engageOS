@@ -242,8 +242,18 @@ export type PlayResult =
       expires_at: string;
       /** Present for coupon_drop wins — used for opportunistic pool top-up. */
       campaign_id?: string;
+      /** The won prize/tier id — targets real-time minting at the right parent. */
+      prize_id?: string;
+      /** The coupon row id — links the real-time Shopify mint back to it. */
+      coupon_id?: string;
+      /** The won tier's Shopify parent discount id to attach the code to. */
+      shopify_parent_discount_id?: string | null;
       /** How the code was sourced: internal, a Shopify pool code, or fallback. */
-      coupon_source?: "internal" | "shopify_pool" | "internal_fallback";
+      coupon_source?:
+        | "internal"
+        | "shopify_pool"
+        | "internal_fallback"
+        | "shopify_realtime";
       /** True when the code is a unique Shopify discount to redeem online. */
       redeem_online?: boolean;
       /** Human-readable discount summary, e.g. "10% off" (reveal copy). */

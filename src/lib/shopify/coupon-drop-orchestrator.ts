@@ -3,7 +3,6 @@ import { adminClient } from "@/lib/db/rpc";
 import { getShopifyForBusiness, refreshShopifyScopes } from "@/lib/shopify/adapter";
 import {
   bulkAddCodes,
-  chunk,
   createParentDiscount,
   generatePoolCodes,
   pollBulkCreation,
@@ -16,23 +15,19 @@ import type { ShopifyClient } from "@/lib/shopify/client";
 import { createLogger, newCorrelationId } from "@/server/observability/logger";
 
 /**
- * Coupon Drop pool orchestration — the glue between the Node-side Shopify
- * Discount API (discounts.ts) and the SQL pool lifecycle RPCs (0045). Runs
- * server-side only, off the request path via `after()` / cron.
+ * Coupon Drop orchestration — the glue between the Node-side Shopify Discount API
+ * (discounts.ts) and the SQL coupon lifecycle. Runs server-side only, off the
+ * request path via `after()` / cron.
  *
- * Lifecycle for a coupon_drop campaign on activation:
- *   1. Resolve the tenant's Shopify client; guard the `write_discounts` scope.
- *   2. Create ONE parent discount (the merchant's rule) → set_parent(gid,'minting').
- *   3. Generate `pool_target` unique codes, bulk-add to Shopify in chunks, and
- *      persist each accepted chunk to the pool (idempotent).
- *   4. set_status('ready'). On any failure → set_status('error', message) so the
- *      merchant sees actionable guidance and the play engine falls back to
- *      internal codes (customers still win).
- *
- * Top-up refills a low pool the same way against the EXISTING parent discount.
+ * Real-time model (0050):
+ *   * On activation, create ONE parent discount per prize tier (the merchant's
+ *     rule: percentage/amount, minimums, scopes). No pool is pre-minted.
+ *   * On each win, play_campaign issues a unique code using the campaign's custom
+ *     prefix; mintCouponForWin then attaches THAT code to the won tier's parent
+ *     discount in Shopify and links the redeem-code id back onto the coupon.
+ *   * Any Shopify failure leaves the customer's internal fallback code intact — a
+ *     win is never blocked.
  */
-
-const SHOPIFY_BULK_CHUNK = 100;
 
 interface CouponConfigRow {
   campaign_id: string;
@@ -62,15 +57,6 @@ interface CouponTier {
   discount_value: number;
   total_quantity: number;
   shopify_parent_discount_id: string | null;
-}
-
-interface PoolCounts {
-  available: number;
-  claimed: number;
-  total: number;
-  pool_target: number;
-  pool_low_watermark: number;
-  pool_status: string;
 }
 
 /** True when the granted scope string includes write_discounts. */
@@ -174,21 +160,6 @@ async function loadTiers(
   });
 }
 
-async function poolCounts(
-  businessId: string,
-  campaignId: string,
-  prizeId?: string
-): Promise<PoolCounts | null> {
-  const { data, error } = await adminClient().rpc("coupon_pool_counts", {
-    p_business_id: businessId,
-    p_campaign_id: campaignId,
-    p_prize_id: prizeId ?? null,
-  });
-  if (error) throw new Error(`coupon_pool_counts failed: ${error.message}`);
-  const row = Array.isArray(data) ? (data[0] as PoolCounts | undefined) : (data as PoolCounts | null);
-  return row ?? null;
-}
-
 async function setStatus(
   businessId: string,
   campaignId: string,
@@ -223,59 +194,105 @@ function tierDiscountConfig(cfg: CouponConfigRow, tier: CouponTier): DiscountCon
 }
 
 /**
- * Mint (or extend) the pool for ONE tier of a campaign by `count` codes.
- * `parentGid` is the tier's parent discount to attach codes to; `prizeId` tags
- * each pooled code so play_campaign can claim a code matching the won tier.
- * Returns the number of codes added.
+ * Real-time mint for ONE winning play. The customer already holds `code` (issued
+ * by play_campaign using the campaign's custom prefix, flagged for
+ * reconciliation). Here we register that exact code in Shopify against the won
+ * tier's parent discount so it becomes redeemable online at the tier's discount,
+ * then link the Shopify redeem-code id back onto the coupon row.
  *
- * Each chunk is bulk-added to Shopify, then the async job is POLLED so we persist
- * ONLY codes Shopify confirmed created — capturing each code's redeem-code GID
- * (shopify_redeem_code_id). Unconfirmed/failed codes are never written to the
- * pool, so a partially-failed job can't seed checkout-invalid codes; the
- * watermark top-up path naturally refills any shortfall.
+ * Never throws: on any failure (no Shopify, missing scope, bulk error) the coupon
+ * stays as the internal fallback the customer already has — a win is never
+ * blocked. Runs off the response path (called from the play route's `after()`).
+ * Returns whether the coupon was linked to a live Shopify code.
  */
-async function mintCodes(
-  businessId: string,
-  campaignId: string,
-  prizeId: string,
-  parentGid: string,
-  count: number,
-  prefix: string
-): Promise<number> {
-  if (count <= 0) return 0;
-  const shopify = await getShopifyForBusiness(businessId);
-  if (!shopify) throw new ShopifyDiscountError("Shopify not connected");
+export async function mintCouponForWin(params: {
+  businessId: string;
+  campaignId: string;
+  prizeId: string;
+  couponId: string;
+  code: string;
+  parentGid: string | null;
+}): Promise<{ linked: boolean }> {
+  const { businessId, campaignId, prizeId, couponId, code } = params;
+  const log = createLogger(newCorrelationId(), {
+    route: "coupon-drop.mint-win",
+    businessId,
+    campaignId,
+  });
+  try {
+    const shopify = await getShopifyForBusiness(businessId);
+    if (!shopify) return { linked: false };
+    if (!hasWriteDiscounts(shopify.shop.scopes)) {
+      const check = await ensureWriteDiscounts(businessId, shopify.shop.scopes);
+      if (!check.ok) return { linked: false };
+    }
 
-  const codes = generatePoolCodes(prefix, count);
-  let added = 0;
-  for (const part of chunk(codes, SHOPIFY_BULK_CHUNK)) {
-    const bulkId = await bulkAddCodes(shopify.client, parentGid, part);
-    if (!bulkId) continue;
+    // Resolve the tier's parent discount, creating it on the fly if activation
+    // never ran (so later wins on this tier reuse it).
+    let parentGid = params.parentGid;
+    if (!parentGid) {
+      const cfg = await loadConfig(businessId, campaignId);
+      if (!cfg) return { linked: false };
+      const tier = (await loadTiers(campaignId, cfg)).find((t) => t.prize_id === prizeId);
+      if (!tier) return { linked: false };
+      parentGid = await ensureTierParent(businessId, campaignId, cfg, tier, shopify.client);
+    }
 
+    const bulkId = await bulkAddCodes(shopify.client, parentGid, [code]);
+    if (!bulkId) return { linked: false };
     const result = await pollBulkCreation(shopify.client, bulkId);
-    if (result.codes.length === 0) continue; // nothing confirmed → skip persist
+    const confirmed = result.codes.find((c) => c.code === code) ?? result.codes[0];
+    if (!confirmed) {
+      log.warn("coupon_drop.mint_win_unconfirmed", { couponId, code });
+      return { linked: false };
+    }
 
-    const { data, error } = await adminClient().rpc("coupon_pool_add_codes", {
+    const { error } = await adminClient().rpc("coupon_link_shopify", {
       p_business_id: businessId,
-      p_campaign_id: campaignId,
-      p_prize_id: prizeId,
+      p_coupon_id: couponId,
+      p_redeem_id: confirmed.redeemId,
       p_parent_gid: parentGid,
-      p_codes: result.codes.map((c) => ({
-        code: c.code,
-        shopify_redeem_code_id: c.redeemId,
-      })),
     });
-    if (error) throw new Error(`coupon_pool_add_codes failed: ${error.message}`);
-    added += typeof data === "number" ? data : 0;
+    if (error) throw new Error(`coupon_link_shopify failed: ${error.message}`);
+    log.info("coupon_drop.mint_win_ok", { couponId, prizeId });
+    return { linked: true };
+  } catch (err) {
+    log.error("coupon_drop.mint_win_failed", { couponId, err: errorMessage(err) });
+    return { linked: false };
   }
-  return added;
 }
 
-/** Short, tier-distinct code prefix, e.g. "AB12P10" for a 10% tier. */
-function tierPrefix(campaignId: string, tier: CouponTier): string {
-  const base = (campaignId.replace(/-/g, "").slice(0, 4).toUpperCase() || "SAVE");
-  const mark = tier.discount_type === "percentage" ? "P" : "F";
-  return `${base}${mark}${Math.round(tier.discount_value)}`.slice(0, 10);
+/**
+ * Ensure a tier has a Shopify parent discount (the rule), creating it if absent
+ * and persisting the id via coupon_prize_set_parent. Returns the parent GID.
+ */
+async function ensureTierParent(
+  businessId: string,
+  campaignId: string,
+  cfg: CouponConfigRow,
+  tier: CouponTier,
+  client: ShopifyClient
+): Promise<string> {
+  if (tier.shopify_parent_discount_id) return tier.shopify_parent_discount_id;
+  const pct =
+    tier.discount_type === "percentage"
+      ? `${tier.discount_value}%`
+      : `${cfg.currency ?? "INR"} ${tier.discount_value}`;
+  const placeholder = generatePoolCodes("PARENT", 1)[0];
+  const parentGid = await createParentDiscount(
+    client,
+    `Coupon Drop ${tier.name} (${pct}) ${campaignId.slice(0, 8)}`,
+    tierDiscountConfig(cfg, tier),
+    placeholder
+  );
+  const { error } = await adminClient().rpc("coupon_prize_set_parent", {
+    p_business_id: businessId,
+    p_campaign_id: campaignId,
+    p_prize_id: tier.prize_id,
+    p_parent_gid: parentGid,
+  });
+  if (error) throw new Error(`coupon_prize_set_parent failed: ${error.message}`);
+  return parentGid;
 }
 
 /**
@@ -342,28 +359,30 @@ export async function activateCouponDropPool(
 
     await setStatus(businessId, campaignId, "minting");
 
-    let totalAdded = 0;
+    // Real-time model: activation only creates each tier's PARENT discount (the
+    // rule). Codes are minted per-customer at play time (mintCouponForWin), each
+    // carrying the campaign's custom prefix. No pool is pre-minted here.
     let firstParentGid: string | null = cfg.shopify_parent_discount_id;
     for (const tier of tiers) {
-      const added = await activateTier(businessId, campaignId, cfg, tier, shopify.client, log);
-      totalAdded += added.count;
-      firstParentGid ??= added.parentGid;
+      const parentGid = await ensureTierParent(businessId, campaignId, cfg, tier, shopify.client);
+      firstParentGid ??= parentGid;
+      log.info("coupon_drop.tier_parent_ready", { prizeId: tier.prize_id, tier: tier.name });
     }
 
-    // Keep the config's parent pointer populated (used as the "activated" flag by
-    // the top-up paths). Point it at the first tier's parent for continuity.
+    // Keep the config's parent pointer populated (used as the "activated" flag).
+    // Point it at the first tier's parent for continuity.
     if (firstParentGid && firstParentGid !== cfg.shopify_parent_discount_id) {
       const { error } = await adminClient().rpc("coupon_config_set_parent", {
         p_business_id: businessId,
         p_campaign_id: campaignId,
         p_parent_gid: firstParentGid,
-        p_pool_status: "minting",
+        p_pool_status: "ready",
       });
       if (error) throw new Error(`coupon_config_set_parent failed: ${error.message}`);
     }
 
     await setStatus(businessId, campaignId, "ready");
-    log.info("coupon_drop.pool_ready", { added: totalAdded, tiers: tiers.length });
+    log.info("coupon_drop.parents_ready", { tiers: tiers.length });
   } catch (err) {
     const message = errorMessage(err);
     log.error("coupon_drop.activate_failed", { err: message });
@@ -375,162 +394,32 @@ export async function activateCouponDropPool(
   }
 }
 
-/** Per-tier target: enough codes for the tier's whole stock (falls back to the
- * campaign pool_target for unlimited-stock tiers). */
-function tierTarget(cfg: CouponConfigRow, tier: CouponTier): number {
-  return tier.total_quantity > 0 ? tier.total_quantity : (cfg.pool_target ?? 500);
-}
-
 /**
- * Create/reuse one tier's parent discount and mint its pool up to the tier
- * target. Returns the parent GID and the number of codes added. Throws on hard
- * failure so the caller records an error status for the whole campaign.
- */
-async function activateTier(
-  businessId: string,
-  campaignId: string,
-  cfg: CouponConfigRow,
-  tier: CouponTier,
-  client: ShopifyClient,
-  log: ReturnType<typeof createLogger>
-): Promise<{ parentGid: string; count: number }> {
-  let parentGid = tier.shopify_parent_discount_id;
-  if (!parentGid) {
-    const pct =
-      tier.discount_type === "percentage"
-        ? `${tier.discount_value}%`
-        : `${cfg.currency ?? "INR"} ${tier.discount_value}`;
-    const placeholder = generatePoolCodes("PARENT", 1)[0];
-    parentGid = await createParentDiscount(
-      client,
-      `Coupon Drop ${tier.name} (${pct}) ${campaignId.slice(0, 8)}`,
-      tierDiscountConfig(cfg, tier),
-      placeholder
-    );
-    const { error } = await adminClient().rpc("coupon_prize_set_parent", {
-      p_business_id: businessId,
-      p_campaign_id: campaignId,
-      p_prize_id: tier.prize_id,
-      p_parent_gid: parentGid,
-    });
-    if (error) throw new Error(`coupon_prize_set_parent failed: ${error.message}`);
-  }
-
-  const target = tierTarget(cfg, tier);
-  const counts = await poolCounts(businessId, campaignId, tier.prize_id);
-  const existing = counts?.available ?? 0;
-  const toMint = Math.max(0, target - existing);
-  const count = await mintCodes(
-    businessId,
-    campaignId,
-    tier.prize_id,
-    parentGid,
-    toMint,
-    tierPrefix(campaignId, tier)
-  );
-  log.info("coupon_drop.tier_minted", {
-    prizeId: tier.prize_id,
-    tier: tier.name,
-    added: count,
-    target,
-  });
-  return { parentGid, count };
-}
-
-/**
- * Refill a campaign's pool if it has dropped at/below its low watermark. Safe to
- * call opportunistically on every coupon_drop win — it no-ops when the pool is
- * healthy or not ready.
+ * Refill path retained for API/cron compatibility. Under the real-time minting
+ * model there is no pre-minted pool to refill (codes are minted per win), so this
+ * is a no-op. Kept so the daily cron and the play route import sites don't break.
  */
 export async function topUpPoolIfLow(
-  businessId: string,
-  campaignId: string
+  _businessId: string,
+  _campaignId: string
 ): Promise<void> {
-  const log = createLogger(newCorrelationId(), {
-    route: "coupon-drop.topup",
-    businessId,
-    campaignId,
-  });
-  try {
-    const cfg = await loadConfig(businessId, campaignId);
-    if (!cfg || !cfg.shopify_parent_discount_id) return;
-
-    const tiers = await loadTiers(campaignId, cfg);
-    // Only tiers whose parent has already been created are eligible for top-up;
-    // a tier still missing a parent hasn't been activated yet.
-    const active = tiers.filter((t) => t.shopify_parent_discount_id);
-    if (active.length === 0) return;
-
-    // Any tier at/below the watermark triggers a top-up pass.
-    const lowTiers: Array<{ tier: CouponTier; toMint: number }> = [];
-    for (const tier of active) {
-      const counts = await poolCounts(businessId, campaignId, tier.prize_id);
-      if (!counts) continue;
-      if (counts.available > counts.pool_low_watermark) continue;
-      const toMint = Math.max(0, tierTarget(cfg, tier) - counts.available);
-      if (toMint > 0) lowTiers.push({ tier, toMint });
-    }
-    if (lowTiers.length === 0) return;
-
-    const shopify = await getShopifyForBusiness(businessId);
-    if (!shopify) return;
-    if (!hasWriteDiscounts(shopify.shop.scopes)) {
-      const check = await ensureWriteDiscounts(businessId, shopify.shop.scopes);
-      if (!check.ok) return;
-    }
-
-    await setStatus(businessId, campaignId, "minting");
-    let added = 0;
-    for (const { tier, toMint } of lowTiers) {
-      added += await mintCodes(
-        businessId,
-        campaignId,
-        tier.prize_id,
-        tier.shopify_parent_discount_id!,
-        toMint,
-        tierPrefix(campaignId, tier)
-      );
-    }
-    await setStatus(businessId, campaignId, "ready");
-    log.info("coupon_drop.topped_up", { added, tiers: lowTiers.length });
-  } catch (err) {
-    const message = errorMessage(err);
-    log.error("coupon_drop.topup_failed", { err: message });
-    try {
-      await setStatus(businessId, campaignId, "error", message.slice(0, 500));
-    } catch {
-      // best effort
-    }
-  }
+  // No-op: real-time minting issues codes at play time, not from a pool.
 }
 
 /**
- * Daily cron sweep: top up every active coupon_drop campaign whose pool is low.
- * Serial to stay within Shopify rate limits and Vercel Hobby time budgets.
+ * Daily cron sweep. Retained for the scheduler tick; a no-op under the real-time
+ * minting model (there is no pool to refill). Returns swept: 0.
  */
 export async function topUpAllCouponDropPools(): Promise<{ swept: number }> {
-  const { data, error } = await adminClient().rpc("coupon_drop_campaigns_for_topup");
-  if (error) throw new Error(`coupon_drop_campaigns_for_topup failed: ${error.message}`);
-  const rows = (data as Array<{ business_id: string; campaign_id: string }>) ?? [];
-  for (const row of rows) {
-    await topUpPoolIfLow(row.business_id, row.campaign_id);
-  }
-  return { swept: rows.length };
+  return { swept: 0 };
 }
 
 /**
- * Opportunistic top-up keyed only by campaign — resolves the owning business
- * from the config row. Used on the play win path where only the campaign_id is
- * known. No-ops silently if the campaign has no coupon config.
+ * Opportunistic per-campaign top-up. Retained for the play route import site; a
+ * no-op under the real-time minting model.
  */
-export async function topUpPoolForCampaign(campaignId: string): Promise<void> {
-  const { data, error } = await adminClient()
-    .from("campaign_coupon_configs")
-    .select("business_id")
-    .eq("campaign_id", campaignId)
-    .maybeSingle();
-  if (error || !data) return;
-  await topUpPoolIfLow((data as { business_id: string }).business_id, campaignId);
+export async function topUpPoolForCampaign(_campaignId: string): Promise<void> {
+  // No-op: real-time minting issues codes at play time, not from a pool.
 }
 
 function errorMessage(err: unknown): string {
