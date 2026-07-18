@@ -26,6 +26,8 @@ interface FormShape {
   description: string;
   prize_type: PrizeType;
   prize_value: string;
+  discount_type: "percentage" | "fixed_amount";
+  discount_value: string;
   weight: string;
   total_quantity: string;
   expiry_days: string;
@@ -43,6 +45,8 @@ function initial(prize?: Prize): FormShape {
     description: prize?.description ?? "",
     prize_type: prize?.prize_type ?? "coupon",
     prize_value: prize?.prize_value != null ? String(prize.prize_value) : "",
+    discount_type: prize?.discount_type ?? "percentage",
+    discount_value: prize?.discount_value != null ? String(prize.discount_value) : "",
     weight: prize?.weight != null ? String(prize.weight) : "100",
     total_quantity: prize?.total_quantity != null ? String(prize.total_quantity) : "100",
     expiry_days: prize?.expiry_days != null ? String(prize.expiry_days) : "15",
@@ -103,6 +107,9 @@ export function RewardForm({ campaignId, prize, onClose, onSaved }: Props) {
       description: form.description,
       prize_type: form.prize_type,
       prize_value: typeMeta.hasValue && form.prize_value !== "" ? Number(form.prize_value) : null,
+      discount_type: form.prize_type === "coupon" ? form.discount_type : null,
+      discount_value:
+        form.prize_type === "coupon" && form.discount_value !== "" ? Number(form.discount_value) : null,
       weight: form.weight,
       total_quantity: form.total_quantity,
       expiry_days: form.expiry_days,
@@ -227,6 +234,34 @@ export function RewardForm({ campaignId, prize, onClose, onSaved }: Props) {
             <Field label={form.prize_type === "wallet_points" ? "Points" : "Value (₹)"}>
               <input type="number" min={0} value={form.prize_value} onChange={(e) => set("prize_value", e.target.value)} className={inputCls} placeholder="0" />
             </Field>
+          )}
+
+          {form.prize_type === "coupon" && (
+            <div className="grid grid-cols-2 gap-4 rounded-xl bg-emerald-50/60 border border-emerald-100 p-3">
+              <Field label="Discount Type">
+                <select
+                  value={form.discount_type}
+                  onChange={(e) => set("discount_type", e.target.value as FormShape["discount_type"])}
+                  className={inputCls}
+                >
+                  <option value="percentage">Percentage (%)</option>
+                  <option value="fixed_amount">Fixed amount</option>
+                </select>
+              </Field>
+              <Field label={form.discount_type === "fixed_amount" ? "Amount Off" : "Percent Off (%)"}>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.discount_value}
+                  onChange={(e) => set("discount_value", e.target.value)}
+                  className={inputCls}
+                  placeholder={form.discount_type === "fixed_amount" ? "e.g. 100" : "e.g. 10"}
+                />
+              </Field>
+              <p className="col-span-2 text-[11px] leading-snug text-emerald-700/80">
+                For Coupon Drop campaigns, this tier mints its own Shopify discount at this rate.
+              </p>
+            </div>
           )}
 
           <div className="grid grid-cols-3 gap-4">

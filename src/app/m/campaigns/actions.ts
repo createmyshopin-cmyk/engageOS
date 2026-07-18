@@ -51,6 +51,10 @@ const prizeSchema = z.object({
     .enum(["coupon", "physical_gift", "gift_voucher", "lucky_draw", "cashback", "wallet_points"])
     .default("coupon"),
   prize_value: z.coerce.number().min(0).max(1000000).nullable().optional(),
+  // Per-tier Coupon Drop discount: each coupon tier mints its own Shopify
+  // discount at this %/amount, so a tier winner gets a code carrying THIS value.
+  discount_type: z.enum(["percentage", "fixed_amount"]).nullable().optional(),
+  discount_value: z.coerce.number().min(0).max(1000000).nullable().optional(),
   is_fallback: z.coerce.boolean().default(false),
 });
 
@@ -212,6 +216,8 @@ export async function createCampaignAction(
           expiry_days: p.expiry_days,
           prize_type: p.prize_type,
           prize_value: p.prize_value ?? null,
+          discount_type: p.discount_type ?? null,
+          discount_value: p.discount_value ?? null,
           is_fallback: p.is_fallback,
         }))
       );
@@ -480,6 +486,8 @@ export async function duplicateCampaignAction(
             expiry_days: p.expiry_days,
             prize_type: p.prize_type ?? "coupon",
             prize_value: p.prize_value ?? null,
+            discount_type: p.discount_type ?? null,
+            discount_value: p.discount_value ?? null,
             is_fallback: p.is_fallback ?? false,
           }))
         );

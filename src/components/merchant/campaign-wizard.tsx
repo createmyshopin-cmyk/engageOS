@@ -47,6 +47,10 @@ interface PrizeRow {
   expiry_days: number;
   prize_type: PrizeType;
   prize_value: number | null;
+  // Per-tier Coupon Drop discount (only meaningful for coupon prizes on a
+  // coupon_drop campaign). Each tier mints its own Shopify discount at this rate.
+  discount_type: "percentage" | "fixed_amount" | null;
+  discount_value: number | null;
   is_fallback: boolean;
 }
 
@@ -219,8 +223,8 @@ function todayISO() {
 }
 
 const DEFAULT_PRIZES: PrizeRow[] = [
-  { name: "10% OFF Coupon", weight: 100, total_quantity: 200, expiry_days: 30, prize_type: "coupon", prize_value: null, is_fallback: false },
-  { name: "5% OFF Coupon", weight: 200, total_quantity: 400, expiry_days: 30, prize_type: "coupon", prize_value: null, is_fallback: false },
+  { name: "10% OFF Coupon", weight: 100, total_quantity: 200, expiry_days: 30, prize_type: "coupon", prize_value: null, discount_type: "percentage", discount_value: 10, is_fallback: false },
+  { name: "5% OFF Coupon", weight: 200, total_quantity: 400, expiry_days: 30, prize_type: "coupon", prize_value: null, discount_type: "percentage", discount_value: 5, is_fallback: false },
 ];
 
 const DEFAULT_BANNER = "https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?auto=format&fit=crop&w=1200&q=80";
@@ -310,7 +314,7 @@ export function CampaignWizard() {
   }
 
   function addPrize() {
-    setPrizes([...prizes, { name: "", weight: 50, total_quantity: 100, expiry_days: 30, prize_type: "coupon", prize_value: null, is_fallback: false }]);
+    setPrizes([...prizes, { name: "", weight: 50, total_quantity: 100, expiry_days: 30, prize_type: "coupon", prize_value: null, discount_type: "percentage", discount_value: null, is_fallback: false }]);
   }
 
   function removePrize(index: number) {
@@ -938,6 +942,37 @@ export function CampaignWizard() {
                       <p className="text-[11px] text-neutral-400 -mt-1">
                         {PRIZE_TYPES.find((t) => t.id === prize.prize_type)?.hint}
                       </p>
+                      {selectedType === "coupon_drop" && prize.prize_type === "coupon" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl bg-emerald-50/60 border border-emerald-100 p-3">
+                          <Field label="Discount Type *">
+                            <select
+                              value={prize.discount_type ?? "percentage"}
+                              onChange={(e) =>
+                                updatePrize(i, "discount_type", e.target.value as "percentage" | "fixed_amount")
+                              }
+                              className={inputCls}
+                            >
+                              <option value="percentage">Percentage (%)</option>
+                              <option value="fixed_amount">Fixed amount</option>
+                            </select>
+                          </Field>
+                          <Field label={prize.discount_type === "fixed_amount" ? "Amount Off *" : "Percent Off * (%)"}>
+                            <input
+                              type="number"
+                              min={0}
+                              value={prize.discount_value ?? ""}
+                              onChange={(e) =>
+                                updatePrize(i, "discount_value", e.target.value === "" ? (null as any) : Number(e.target.value))
+                              }
+                              placeholder={prize.discount_type === "fixed_amount" ? "e.g. 100" : "e.g. 10"}
+                              className={inputCls}
+                            />
+                          </Field>
+                          <p className="sm:col-span-2 text-[11px] leading-snug text-emerald-700/80">
+                            This tier mints its own Shopify discount at this rate — a winner of this prize gets a real code for exactly this discount.
+                          </p>
+                        </div>
+                      )}
                       <div className="grid grid-cols-3 gap-3">
                         <Field label="Quantity">
                           <input type="number" min={1} value={prize.total_quantity}

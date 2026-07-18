@@ -157,6 +157,8 @@ export interface Prize {
   expiry_days: number;
   prize_type: PrizeType;
   prize_value: number | null;
+  discount_type: "percentage" | "fixed_amount" | null;
+  discount_value: number | null;
   is_fallback: boolean;
   image_url: string | null;
   background_color: string | null;

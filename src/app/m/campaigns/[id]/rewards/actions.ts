@@ -22,6 +22,8 @@ const rewardSchema = z.object({
     .enum(["coupon", "physical_gift", "gift_voucher", "lucky_draw", "cashback", "wallet_points"])
     .default("coupon"),
   prize_value: z.coerce.number().min(0).max(1000000).nullable().optional(),
+  discount_type: z.enum(["percentage", "fixed_amount"]).nullable().optional(),
+  discount_value: z.coerce.number().min(0).max(1000000).nullable().optional(),
   is_fallback: z.coerce.boolean().default(false),
   image_url: z.string().trim().url("Invalid image URL").nullable().optional().or(z.literal("")),
   background_color: z
@@ -69,6 +71,8 @@ export async function addRewardAction(
         expiry_days: d.expiry_days,
         prize_type: d.prize_type,
         prize_value: d.prize_value ?? null,
+        discount_type: d.discount_type ?? null,
+        discount_value: d.discount_value ?? null,
         is_fallback: d.is_fallback,
         image_url: d.image_url || null,
         background_color: d.background_color || null,
@@ -134,6 +138,8 @@ export async function updateRewardAction(
       p_badge: d.badge || null,
       p_sort_order: d.sort_order,
       p_priority: d.priority,
+      p_discount_type: d.discount_type ?? null,
+      p_discount_value: d.discount_value ?? null,
     });
 
     revalidatePath(`/m/campaigns/${campaignId}`);
