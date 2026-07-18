@@ -14,6 +14,25 @@ const str = (v: unknown): string | null =>
 
 type Raw = Record<string, unknown>;
 
+/**
+ * Coerce a Shopify phone into the strict Indian E.164 the CDP `customers` table
+ * enforces (`^\+91[6-9]\d{9}$`). Shopify returns phones in mixed shapes — bare
+ * 10-digit locals, `91…`, `0…`, with spaces/dashes — so we mirror the same
+ * accept-and-normalize rules as `phoneSchema` in validation.ts. Returns null for
+ * anything that can't be normalized (foreign numbers, landlines, junk): the
+ * customer upsert RPC then skips it exactly like an email-only customer, instead
+ * of throwing a check-constraint violation that would fail the whole page.
+ */
+function normalizeIndianPhone(raw: string | null): string | null {
+  if (!raw) return null;
+  const v = raw.replace(/[\s-]/g, "");
+  if (/^\+91[6-9]\d{9}$/.test(v)) return v;
+  if (/^91[6-9]\d{9}$/.test(v)) return `+${v}`;
+  if (/^0[6-9]\d{9}$/.test(v)) return `+91${v.slice(1)}`;
+  if (/^[6-9]\d{9}$/.test(v)) return `+91${v}`;
+  return null;
+}
+
 export function normalizeProduct(p: Raw): Record<string, unknown> {
   const variants = Array.isArray(p.variants) ? (p.variants as Raw[]) : [];
   const firstPrice = variants.length > 0 ? str(variants[0].price) : null;
@@ -83,7 +102,7 @@ export function normalizeCustomer(c: Raw): Record<string, unknown> {
   const defaultAddress = c.default_address as Raw | null;
   return {
     shopify_customer_id: str(c.id),
-    phone: str(c.phone) ?? str(defaultAddress?.phone),
+    phone: normalizeIndianPhone(str(c.phone) ?? str(defaultAddress?.phone)),
     email: str(c.email),
     name: name || null,
     raw: c,

@@ -42,6 +42,17 @@ export class ShopifyApiError extends Error {
   get isAuthError(): boolean {
     return this.status === 401 || this.status === 403;
   }
+
+  /**
+   * A 403 that means the token is VALID but the app was never granted a
+   * required scope (e.g. "requires merchant approval for read_locations scope").
+   * This is NOT a revoked/expired token — reconnecting won't help; the merchant
+   * must add the scope to their custom app. Treated as a skippable, non-retrying
+   * outcome rather than an auth failure.
+   */
+  get isScopeError(): boolean {
+    return this.status === 403 && /requires merchant approval for .*scope/i.test(this.message);
+  }
 }
 
 export interface ListParams {

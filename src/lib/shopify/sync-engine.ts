@@ -169,6 +169,16 @@ export async function runSyncJob(job: ShopifySyncJob): Promise<void> {
       await runPaginated(job, tenant.client, log);
     }
   } catch (err) {
+    if (err instanceof ShopifyApiError && err.isScopeError) {
+      // The token is VALID but the app lacks a required scope (e.g.
+      // read_locations for inventory). Retrying can never succeed — only the
+      // merchant granting the scope can. Complete the job cleanly (no retry
+      // storm, no red "auth failed" banner) so the rest of the sync is
+      // unaffected; the merchant re-runs this resource after adding the scope.
+      await completeSyncJob(job.business_id, job.id);
+      log.warn("shopify.sync.scope_missing", { status: err.status, message: err.message });
+      return;
+    }
     if (err instanceof ShopifyApiError && err.isAuthError) {
       // A 401/403 here is transient more often than not — a token caught
       // mid-refresh, a brief scope hiccup, Shopify hiccuping. It does NOT mean
