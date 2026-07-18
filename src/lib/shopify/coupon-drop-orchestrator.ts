@@ -1,6 +1,6 @@
 import "server-only";
 import { adminClient } from "@/lib/db/rpc";
-import { getShopifyForBusiness } from "@/lib/shopify/adapter";
+import { getShopifyForBusiness, refreshShopifyScopes } from "@/lib/shopify/adapter";
 import {
   bulkAddCodes,
   chunk,
@@ -10,6 +10,7 @@ import {
   ShopifyDiscountError,
   type DiscountConfig,
 } from "@/lib/shopify/discounts";
+import { isScopeGranted } from "@/lib/shopify/scopes";
 import { ShopifyApiError } from "@/lib/shopify/client";
 import { createLogger, newCorrelationId } from "@/server/observability/logger";
 
@@ -59,11 +60,25 @@ interface PoolCounts {
 
 /** True when the granted scope string includes write_discounts. */
 export function hasWriteDiscounts(scopes: string | null | undefined): boolean {
-  if (!scopes) return false;
-  return scopes
-    .split(",")
-    .map((s) => s.trim())
-    .includes("write_discounts");
+  return isScopeGranted("write_discounts", scopes);
+}
+
+/**
+ * Confirm the tenant can mint discount codes, self-healing a stale Dev Dashboard
+ * token. The stored `scopes` reflect the LAST token exchange; if the merchant
+ * enabled write_discounts afterwards, the still-valid 24h token — and thus the
+ * stored scopes — lag until re-requested. So when the stored set looks like it's
+ * missing the scope, we force a fresh re-exchange (which mints a new token
+ * carrying the current scopes) and re-check before giving up. Returns the
+ * effective scope string that granted (or failed) the check.
+ */
+async function ensureWriteDiscounts(
+  businessId: string,
+  storedScopes: string | null | undefined
+): Promise<{ ok: boolean; scopes: string | null }> {
+  if (hasWriteDiscounts(storedScopes)) return { ok: true, scopes: storedScopes ?? null };
+  const refreshed = await refreshShopifyScopes(businessId);
+  return { ok: hasWriteDiscounts(refreshed), scopes: refreshed };
 }
 
 async function loadConfig(
@@ -205,13 +220,18 @@ export async function activateCouponDropPool(
       return;
     }
     if (!hasWriteDiscounts(shopify.shop.scopes)) {
-      await setStatus(
-        businessId,
-        campaignId,
-        "error",
-        "Missing the write_discounts permission. Reconnect Shopify to grant it."
-      );
-      return;
+      // Stale token? Force a re-exchange to pick up a newly-enabled scope before
+      // erroring out — the merchant may have just granted write_discounts.
+      const check = await ensureWriteDiscounts(businessId, shopify.shop.scopes);
+      if (!check.ok) {
+        await setStatus(
+          businessId,
+          campaignId,
+          "error",
+          "Missing the write_discounts permission. Enable it on your Shopify app, deploy, then reconnect or refresh permissions."
+        );
+        return;
+      }
     }
 
     // Create the parent discount if we don't already have one.
@@ -277,7 +297,11 @@ export async function topUpPoolIfLow(
     if (counts.available > counts.pool_low_watermark) return;
 
     const shopify = await getShopifyForBusiness(businessId);
-    if (!shopify || !hasWriteDiscounts(shopify.shop.scopes)) return;
+    if (!shopify) return;
+    if (!hasWriteDiscounts(shopify.shop.scopes)) {
+      const check = await ensureWriteDiscounts(businessId, shopify.shop.scopes);
+      if (!check.ok) return;
+    }
 
     const toMint = Math.max(0, counts.pool_target - counts.available);
     if (toMint <= 0) return;

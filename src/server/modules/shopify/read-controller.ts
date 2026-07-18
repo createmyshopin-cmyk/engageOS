@@ -32,6 +32,17 @@ export class ShopifyReadController extends Controller {
     return ok(data, { correlationId: this.ctx.correlationId, version: this.ctx.version });
   }
 
+  /**
+   * Force a fresh Shopify token exchange to pick up newly-enabled scopes. This
+   * mutates stored state (rotates the cached token + scopes), so it requires
+   * write scope rather than read.
+   */
+  async refreshScopes(): Promise<NextResponse> {
+    requireScope(this.principal(), "write");
+    const data = await this.service.refreshScopes();
+    return ok(data, { correlationId: this.ctx.correlationId, version: this.ctx.version });
+  }
+
   async couponDrops(): Promise<NextResponse> {
     requireScope(this.principal(), "read");
     const data = await this.service.couponDrops();

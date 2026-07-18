@@ -177,3 +177,22 @@ export function useDisconnectShopify() {
     },
   });
 }
+
+/**
+ * Force a fresh Shopify token exchange to pick up scopes the merchant enabled
+ * AFTER connecting. A Dev Dashboard app's 24h token keeps its original scope set
+ * until re-issued, so this re-exchanges immediately and reconciles the stored
+ * scopes. On success the scopes + coupon-drop queries are invalidated so the
+ * badges and pool state reflect reality.
+ */
+export function useRefreshShopifyScopes() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiClient.post<ShopifyScopesDTO>("/api/v1/shopify/scopes/refresh"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: shopifyKeys.scopes() });
+      qc.invalidateQueries({ queryKey: shopifyKeys.couponDrops() });
+    },
+  });
+}

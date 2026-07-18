@@ -36,3 +36,34 @@ export function parseScopes(scopes: string | null | undefined): Set<string> {
       .filter(Boolean)
   );
 }
+
+/**
+ * Expand a granted scope set to include the reads that Shopify IMPLIES from
+ * writes. Shopify's access_scopes.json omits `read_x` when `write_x` is granted
+ * ("the read access scope is omitted because it's implied by the write access
+ * scope"), so an exact-string membership check would wrongly flag `read_discounts`
+ * as missing on a token that holds `write_discounts`. We add the implied `read_x`
+ * for every `write_x` present so the granted/missing comparison matches reality.
+ */
+export function expandImpliedScopes(granted: Set<string>): Set<string> {
+  const out = new Set(granted);
+  for (const handle of granted) {
+    if (handle.startsWith("write_")) {
+      out.add(`read_${handle.slice("write_".length)}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * True when `handle` is effectively granted by `scopes`, honoring write-implies-
+ * read. Accepts a raw scope string or a pre-parsed set. Use this everywhere a
+ * required scope is checked so display and enforcement agree.
+ */
+export function isScopeGranted(
+  handle: string,
+  scopes: string | null | undefined | Set<string>
+): boolean {
+  const set = scopes instanceof Set ? scopes : parseScopes(scopes);
+  return expandImpliedScopes(set).has(handle);
+}

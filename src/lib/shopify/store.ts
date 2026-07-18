@@ -73,19 +73,26 @@ export async function upsertShop(
  * Persist a freshly re-exchanged client-credentials access token + its expiry.
  * Used by the refresh path when the cached token has (nearly) expired — the
  * long-lived Client ID/Secret stay put; only the short-lived token rotates.
+ *
+ * `scopes` is refreshed alongside the token when supplied: a Dev Dashboard app's
+ * granted scopes only change on the NEW token issued after a scope re-deploy, so
+ * every re-exchange is our chance to record the current set (see adapter.ts).
  */
 export async function updateShopAccessToken(
   businessId: string,
   accessTokenEnc: string,
-  tokenExpiresAt: string
+  tokenExpiresAt: string,
+  scopes?: string | null
 ): Promise<void> {
+  const patch: Record<string, unknown> = {
+    access_token_enc: accessTokenEnc,
+    token_expires_at: tokenExpiresAt,
+    updated_at: new Date().toISOString(),
+  };
+  if (scopes) patch.scopes = scopes;
   const { error } = await adminClient()
     .from("shopify_shops")
-    .update({
-      access_token_enc: accessTokenEnc,
-      token_expires_at: tokenExpiresAt,
-      updated_at: new Date().toISOString(),
-    })
+    .update(patch)
     .eq("business_id", businessId);
   if (error) throw new Error(`updateShopAccessToken failed: ${error.message}`);
 }

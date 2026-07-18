@@ -39,13 +39,19 @@ const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
  * the cached one is missing or (nearly) expired. Returns the usable plaintext
  * token, or null when the shop has no client credentials to refresh with (legacy
  * permanent-token rows keep working — their token_expires_at is null).
+ *
+ * `force` skips the cache and re-exchanges immediately even on a still-valid
+ * token — the only way to pick up scopes the merchant enabled AFTER the last
+ * exchange, since Shopify keeps the OLD scope set on the existing 24h token until
+ * it's re-requested. Used by refreshScopes() below.
  */
-async function ensureFreshToken(shop: ShopifyShop): Promise<string | null> {
+async function ensureFreshToken(shop: ShopifyShop, force = false): Promise<string | null> {
   const expiresAt = shop.token_expires_at ? new Date(shop.token_expires_at).getTime() : null;
   const stillValid = expiresAt !== null && expiresAt - Date.now() > TOKEN_REFRESH_SKEW_MS;
 
-  // A valid cached token, or a legacy permanent token (no expiry) → use as-is.
-  if (shop.access_token_enc && (stillValid || expiresAt === null)) {
+  // A valid cached token, or a legacy permanent token (no expiry) → use as-is,
+  // unless a scope refresh was explicitly forced.
+  if (!force && shop.access_token_enc && (stillValid || expiresAt === null)) {
     try {
       return decryptSecret(shop.access_token_enc);
     } catch {
@@ -53,7 +59,7 @@ async function ensureFreshToken(shop: ShopifyShop): Promise<string | null> {
     }
   }
 
-  // Expired/absent → re-exchange the merchant's client credentials.
+  // Expired/absent (or forced) → re-exchange the merchant's client credentials.
   if (!shop.client_id || !shop.client_secret_enc) return null;
   let clientSecret: string;
   try {
@@ -64,9 +70,14 @@ async function ensureFreshToken(shop: ShopifyShop): Promise<string | null> {
   try {
     const grant = await exchangeClientCredentials(shop.shop_domain, shop.client_id, clientSecret);
     const newExpiry = new Date(Date.now() + grant.expiresIn * 1000).toISOString();
-    await updateShopAccessToken(shop.business_id, encryptSecret(grant.accessToken), newExpiry);
-    shop.access_token_enc = encryptSecret(grant.accessToken);
+    const enc = encryptSecret(grant.accessToken);
+    // The grant's `scope` is the freshest granted-scope signal we get — persist
+    // it so the stored column (which gates Coupon Drop minting) never lags the
+    // live token. Empty scope from the grant → leave the stored value untouched.
+    await updateShopAccessToken(shop.business_id, enc, newExpiry, grant.scope || null);
+    shop.access_token_enc = enc;
     shop.token_expires_at = newExpiry;
+    if (grant.scope) shop.scopes = grant.scope;
     return grant.accessToken;
   } catch {
     return null; // couldn't refresh → treat as disconnected for this call
@@ -80,6 +91,48 @@ export async function getShopifyForBusiness(businessId: string): Promise<TenantS
   const token = await ensureFreshToken(shop);
   if (!token) return null;
   return { client: new ShopifyClient(shop.shop_domain, token), shop };
+}
+
+/**
+ * Force a fresh client-credentials re-exchange and reconcile the granted scopes.
+ *
+ * Why this exists: a Dev Dashboard app's still-valid 24h token keeps carrying the
+ * scope set it was minted with — so when a merchant enables a new scope (e.g.
+ * write_discounts) in their app and re-deploys, EngageOS won't see it until the
+ * token is re-requested. Both the /m/shopify badges AND the Coupon Drop minting
+ * gate read the stored `scopes`, so a stale token silently blocks code
+ * generation. This bypasses the cache, mints a new token (picking up the new
+ * scopes), then prefers the live access_scopes.json read to record the exact
+ * granted set. Returns the reconciled scope string, or null when not connected /
+ * no credentials to refresh with.
+ */
+export async function refreshShopifyScopes(businessId: string): Promise<string | null> {
+  const shop = await getShop(businessId);
+  if (!shop || shop.status !== "active") return null;
+
+  const token = await ensureFreshToken(shop, true); // force → new token, new scopes
+  if (!token) return null;
+
+  // Prefer the live access-scopes read (authoritative for THIS token); fall back
+  // to the grant's scope that ensureFreshToken already persisted.
+  const client = new ShopifyClient(shop.shop_domain, token);
+  let scopes = shop.scopes ?? null;
+  try {
+    const live = await client.getAccessScopes();
+    if (live) scopes = live;
+  } catch {
+    // keep the grant scope ensureFreshToken stored
+  }
+  if (scopes && scopes !== shop.scopes && shop.access_token_enc && shop.token_expires_at) {
+    // Persist the live-read scopes if they differ from what the grant reported.
+    await updateShopAccessToken(
+      businessId,
+      shop.access_token_enc,
+      shop.token_expires_at,
+      scopes
+    );
+  }
+  return scopes;
 }
 
 /** The topics we subscribe to. Inbound handlers live in the shopify module. */

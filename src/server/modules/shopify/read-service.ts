@@ -4,7 +4,7 @@ import type { RequestContext } from "@/server/http/context";
 import type { TenantRepository } from "@/lib/db/tenant-repository";
 import { ShopifyReadRepository } from "@/server/modules/shopify/read-repository";
 import { toShopifyOverviewDTO, type ShopifyOverviewDTO } from "@/server/modules/shopify/dto";
-import { getShopifyForBusiness } from "@/lib/shopify/adapter";
+import { getShopifyForBusiness, refreshShopifyScopes } from "@/lib/shopify/adapter";
 import type { CouponDropOverviewRow, CouponDropSampleCode } from "@/lib/types";
 
 /**
@@ -59,11 +59,23 @@ export class ShopifyReadService extends Service {
   }
 
   /**
+   * Force-refresh the granted scopes by re-exchanging the Shopify token, so a
+   * scope the merchant enabled AFTER connecting is picked up without waiting for
+   * the 24h token to expire. Returns the reconciled scope set (live:true when the
+   * exchange + read succeeded). No-op shape when not connected.
+   */
+  async refreshScopes(): Promise<{ granted: string[]; live: boolean }> {
+    const refreshed = await refreshShopifyScopes(this.businessId);
+    if (refreshed !== null) return { granted: splitScopes(refreshed), live: true };
+    // Couldn't refresh (not connected / no credentials) → fall back to stored.
+    return this.scopes();
+  }
+
+  /**
    * Per-campaign Coupon Drop overview + a few sample codes per campaign, so the
    * merchant can see what was minted in Shopify and inspect real code values.
    */
-  async couponDrops(sampleLimit = 5): Promise<
-    Array<CouponDropOverviewRow & { sample_codes: CouponDropSampleCode[] }>
+  async couponDrops(sampleLimit = 5): Promise<    Array<CouponDropOverviewRow & { sample_codes: CouponDropSampleCode[] }>
   > {
     const rows = await this.repo.couponDropOverview();
     const withSamples = await Promise.all(

@@ -46,8 +46,9 @@ import {
   useCouponDrops,
   useConnectShopify,
   useDisconnectShopify,
+  useRefreshShopifyScopes,
 } from "@/lib/api/hooks/use-shopify";
-import { REQUIRED_SHOPIFY_SCOPES, parseScopes } from "@/lib/shopify/scopes";
+import { REQUIRED_SHOPIFY_SCOPES, parseScopes, expandImpliedScopes } from "@/lib/shopify/scopes";
 import type { ShopifyCouponDropDTO } from "@/lib/api/types";
 import { ShopifySyncPanel } from "./shopify-sync-panel";
 
@@ -202,9 +203,20 @@ export function ShopifyView() {
    GRANTED PERMISSIONS (live scopes)
 ────────────────────────────────────────────────────────── */
 function ScopesCard() {
-  const { data, isLoading, isError } = useShopifyScopes();
-  const granted = parseScopes((data?.granted ?? []).join(","));
+  const { data, isLoading, isError, refetch } = useShopifyScopes();
+  const refresh = useRefreshShopifyScopes();
+  // Honor Shopify's write-implies-read: a token with write_discounts reports only
+  // write_discounts, but read_discounts is effectively granted. Expanding the set
+  // keeps the badges truthful instead of flagging implied reads as missing.
+  const granted = expandImpliedScopes(parseScopes((data?.granted ?? []).join(",")));
   const missingWrite = !isLoading && !isError && !granted.has("write_discounts");
+
+  async function onRefresh() {
+    // Force a fresh Shopify token exchange (picks up scopes enabled after connect),
+    // then re-read the badges.
+    await refresh.mutateAsync().catch(() => {});
+    refetch();
+  }
 
   return (
     <section className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm p-5">
@@ -222,6 +234,21 @@ function ScopesCard() {
                 : "Recorded when you connected (live check unavailable)."}
           </p>
         </div>
+        {!isLoading && (
+          <button
+            onClick={onRefresh}
+            disabled={refresh.isPending}
+            title="Re-check permissions from Shopify — use this after enabling a new scope on your app."
+            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-bold text-neutral-600 hover:bg-neutral-50 transition cursor-pointer disabled:opacity-50 shrink-0"
+          >
+            {refresh.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            {refresh.isPending ? "Refreshing…" : "Refresh permissions"}
+          </button>
+        )}
       </div>
 
       {isError ? (
@@ -264,8 +291,10 @@ function ScopesCard() {
           <AlertTriangle className="size-4 shrink-0 mt-0.5 text-amber-500" />
           <p className="text-[11px] font-bold text-amber-700">
             <code className="font-black">write_discounts</code> is not granted, so Coupon
-            Drop campaigns can&apos;t mint Shopify codes. Add it to your Dev Dashboard
-            app&apos;s Admin API scopes, then reconnect the store to enable Coupon Drop.
+            Drop campaigns can&apos;t mint Shopify codes. Enable it in your Dev Dashboard
+            app&apos;s Admin API scopes and deploy, then hit{" "}
+            <span className="font-black">Refresh permissions</span> above (Shopify keeps
+            the old scopes on your current 24h token until it&apos;s re-issued).
           </p>
         </div>
       )}
