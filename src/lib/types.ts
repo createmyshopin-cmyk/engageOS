@@ -53,6 +53,20 @@ export type CampaignType =
   | "collect_win"
   | "coupon_drop";
 
+/** Human-readable label for each campaign type (server + client safe). */
+export const CAMPAIGN_TYPE_LABELS: Record<CampaignType, string> = {
+  scratch_win: "Scratch & Win",
+  spin_win: "Spin & Win",
+  lucky_draw: "Lucky Draw",
+  quiz_challenge: "Quiz Challenge",
+  collect_win: "Collect & Win",
+  coupon_drop: "Coupon Drop",
+};
+
+export function campaignTypeLabel(type: CampaignType | null | undefined): string {
+  return (type && CAMPAIGN_TYPE_LABELS[type]) || CAMPAIGN_TYPE_LABELS.scratch_win;
+}
+
 export interface Campaign {
   id: string;
   business_id: string;

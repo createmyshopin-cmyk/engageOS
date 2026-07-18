@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
-import { CampaignStatusBadge, CampaignTypeBadge, campaignTypeLabel, CampaignActions, EmptyState } from "@/components/merchant/campaigns-ui";
+import { CampaignStatusBadge, CampaignTypeBadge, CampaignActions, EmptyState } from "@/components/merchant/campaigns-ui";
+import { campaignTypeLabel } from "@/lib/types";
 import type { Campaign, Prize } from "@/lib/types";
 import { QrCode, Users, Gift, MessageSquare, BarChart3, Plus, CalendarDays } from "lucide-react";
 

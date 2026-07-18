@@ -24,23 +24,11 @@ import {
   deleteCampaignAction,
 } from "@/app/m/campaigns/actions";
 import type { CampaignStatus, CampaignType, Campaign } from "@/lib/types";
+import { campaignTypeLabel } from "@/lib/types";
 
 /* ──────────────────────────────────────────────────────────
-   CAMPAIGN TYPE LABEL + BADGE
+   CAMPAIGN TYPE BADGE
 ────────────────────────────────────────────────────────── */
-export const CAMPAIGN_TYPE_LABELS: Record<CampaignType, string> = {
-  scratch_win: "Scratch & Win",
-  spin_win: "Spin & Win",
-  lucky_draw: "Lucky Draw",
-  quiz_challenge: "Quiz Challenge",
-  collect_win: "Collect & Win",
-  coupon_drop: "Coupon Drop",
-};
-
-export function campaignTypeLabel(type: CampaignType | null | undefined): string {
-  return (type && CAMPAIGN_TYPE_LABELS[type]) || CAMPAIGN_TYPE_LABELS.scratch_win;
-}
-
 export function CampaignTypeBadge({ type }: { type: CampaignType | null | undefined }) {
   return (
     <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
