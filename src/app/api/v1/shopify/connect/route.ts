@@ -4,16 +4,16 @@ import { connectShopifyBody } from "@/server/modules/shopify/connection/validato
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Connect validates the token against the live Shopify API and registers
-// webhooks inline, so allow headroom for those round-trips.
+// Connect exchanges the client credentials for a token against the live Shopify
+// API and registers webhooks inline, so allow headroom for those round-trips.
 export const maxDuration = 60;
 
 /**
  * Shopify connect — /api/v1/shopify/connect
  *
- * POST → connect the tenant's store from merchant-supplied CUSTOM-APP
- * credentials (shop domain + Admin API access token + API secret key). The
- * token is validated against the live Shopify API, both secrets are encrypted
+ * POST → connect the tenant's store from merchant-supplied DEV DASHBOARD
+ * credentials (shop domain + Client ID + Client Secret). The credentials are
+ * exchanged for a short-lived token against the live Shopify API, encrypted
  * before storage, webhooks are registered, and an initial sync is enqueued.
  *
  * Owner/manager only. Tenant is derived from the authenticated session — the

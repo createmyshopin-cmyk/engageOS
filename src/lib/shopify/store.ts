@@ -43,6 +43,9 @@ export async function upsertShop(
     access_token_enc: string;
     scopes?: string | null;
     webhook_secret_enc?: string | null;
+    client_id?: string | null;
+    client_secret_enc?: string | null;
+    token_expires_at?: string | null;
     status?: "active" | "paused" | "revoked";
   }
 ): Promise<void> {
@@ -55,12 +58,36 @@ export async function upsertShop(
         access_token_enc: row.access_token_enc,
         scopes: row.scopes ?? null,
         webhook_secret_enc: row.webhook_secret_enc ?? null,
+        client_id: row.client_id ?? null,
+        client_secret_enc: row.client_secret_enc ?? null,
+        token_expires_at: row.token_expires_at ?? null,
         status: row.status ?? "active",
         updated_at: new Date().toISOString(),
       },
       { onConflict: "business_id" }
     );
   if (error) throw new Error(`upsertShop failed: ${error.message}`);
+}
+
+/**
+ * Persist a freshly re-exchanged client-credentials access token + its expiry.
+ * Used by the refresh path when the cached token has (nearly) expired — the
+ * long-lived Client ID/Secret stay put; only the short-lived token rotates.
+ */
+export async function updateShopAccessToken(
+  businessId: string,
+  accessTokenEnc: string,
+  tokenExpiresAt: string
+): Promise<void> {
+  const { error } = await adminClient()
+    .from("shopify_shops")
+    .update({
+      access_token_enc: accessTokenEnc,
+      token_expires_at: tokenExpiresAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("business_id", businessId);
+  if (error) throw new Error(`updateShopAccessToken failed: ${error.message}`);
 }
 
 export async function setShopStatus(

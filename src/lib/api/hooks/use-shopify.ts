@@ -13,10 +13,10 @@
  * which wrap the typed `apiClient` and centralize query keys + invalidation. The
  * client NEVER sends a tenant id — the v1 guard derives it from the session.
  *
- * Connecting a store uses the CUSTOM-APP model (multi-tenant): the merchant
- * pastes their own Shopify custom app's Admin API token + secret, which are
- * POSTed once to `/api/v1/shopify/connect`, validated + encrypted server-side,
- * and never returned. There is no global OAuth app.
+ * Connecting a store uses the DEV DASHBOARD model (multi-tenant): the merchant
+ * pastes their own Shopify Dev Dashboard app's Client ID + Client Secret, which
+ * are POSTed once to `/api/v1/shopify/connect`, exchanged for a short-lived token
+ * and encrypted server-side, and never returned. There is no global OAuth app.
  */
 
 import {
@@ -112,8 +112,8 @@ export function useTriggerShopifySync() {
 
 export interface ConnectShopifyInput {
   shopDomain: string;
-  accessToken: string;
-  apiSecret: string;
+  clientId: string;
+  clientSecret: string;
 }
 
 export interface ConnectShopifyResult {
@@ -123,10 +123,11 @@ export interface ConnectShopifyResult {
 }
 
 /**
- * Connect a store from merchant-supplied custom-app credentials (multi-tenant).
- * The token + secret are POSTed once over TLS to the server, which validates the
- * token against Shopify, encrypts both, and stores them per-tenant. On success
- * every Shopify query is invalidated so the UI flips to the connected surface.
+ * Connect a store from merchant-supplied Dev Dashboard credentials (multi-tenant).
+ * The Client ID + Client Secret are POSTed once over TLS to the server, which
+ * exchanges them for a short-lived token against Shopify, encrypts them, and
+ * stores them per-tenant. On success every Shopify query is invalidated so the
+ * UI flips to the connected surface.
  */
 export function useConnectShopify() {
   const qc = useQueryClient();

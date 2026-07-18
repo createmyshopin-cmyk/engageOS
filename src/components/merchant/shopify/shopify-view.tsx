@@ -4,11 +4,11 @@
  * ShopifyView — the merchant's Shopify surface for `/m/shopify`.
  *
  * Two states, driven by the read-model overview (`/api/v1/shopify/overview`):
- *   - DISCONNECTED → a custom-app connect form. The merchant creates a custom
- *     app in their OWN Shopify admin and pastes its domain + Admin API access
- *     token + API secret. These are POSTed once to `/api/v1/shopify/connect`,
- *     validated + encrypted server-side (never returned). Multi-tenant: each
- *     merchant brings their own app — there is no global OAuth app.
+ *   - DISCONNECTED → a Dev Dashboard connect form. The merchant builds an app in
+ *     Shopify's Dev Dashboard inside their OWN org and pastes its domain + Client
+ *     ID + Client Secret. These are POSTed once to `/api/v1/shopify/connect`,
+ *     exchanged for a short-lived token + encrypted server-side (never returned).
+ *     Multi-tenant: each merchant brings their own app — no global OAuth app.
  *   - CONNECTED → ingestion totals + the operational Sync Engine dashboard
  *     (`ShopifySyncPanel`), plus a disconnect control inside the panel.
  *
@@ -169,21 +169,21 @@ export function ShopifyView() {
 function ConnectForm() {
   const connect = useConnectShopify();
   const [shopDomain, setShopDomain] = useState("");
-  const [accessToken, setAccessToken] = useState("");
-  const [apiSecret, setApiSecret] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
 
   const canSubmit =
     shopDomain.trim().length > 0 &&
-    accessToken.trim().length > 0 &&
-    apiSecret.trim().length > 0 &&
+    clientId.trim().length > 0 &&
+    clientSecret.trim().length > 0 &&
     !connect.isPending;
 
   function submit() {
     if (!canSubmit) return;
     connect.mutate({
       shopDomain: shopDomain.trim(),
-      accessToken: accessToken.trim(),
-      apiSecret: apiSecret.trim(),
+      clientId: clientId.trim(),
+      clientSecret: clientSecret.trim(),
     });
   }
 
@@ -205,7 +205,7 @@ function ConnectForm() {
           <div>
             <p className="text-sm font-black text-neutral-900">Connect your Shopify store</p>
             <p className="text-[11px] font-semibold text-neutral-500">
-              Paste your custom app credentials — they&apos;re encrypted and never leave our server.
+              Paste your Dev Dashboard app credentials — they&apos;re encrypted and never leave our server.
             </p>
           </div>
         </div>
@@ -226,18 +226,18 @@ function ConnectForm() {
             type="text"
           />
           <Field
-            label="Admin API access token"
-            hint="Starts with shpat_ — from Apps → Develop apps → your app → API credentials"
-            value={accessToken}
-            onChange={setAccessToken}
-            placeholder="shpat_••••••••••••••••••••••••••••••••"
-            type="password"
+            label="Client ID"
+            hint="From your Dev Dashboard app → API credentials → Client ID"
+            value={clientId}
+            onChange={setClientId}
+            placeholder="0123456789abcdef0123456789abcdef"
+            type="text"
           />
           <Field
-            label="API secret key"
-            hint="Same page, under “API secret key”. Used to verify webhooks from your store."
-            value={apiSecret}
-            onChange={setApiSecret}
+            label="Client secret"
+            hint="Same page, under “Client secret”. Also used to verify webhooks from your store."
+            value={clientSecret}
+            onChange={setClientSecret}
             placeholder="••••••••••••••••••••••••••••••••"
             type="password"
           />
@@ -269,11 +269,11 @@ function ConnectForm() {
         <p className="text-xs font-black text-neutral-900">How to get these</p>
         <ol className="mt-3 space-y-2.5">
           {[
-            "In your Shopify admin, go to Settings → Apps and sales channels → Develop apps.",
-            "Click “Create an app”, name it (e.g. EngageOS), then open Configuration.",
-            "Under Admin API scopes, enable read access for products, orders, customers, inventory and discounts. Save.",
-            "Open the API credentials tab and click “Install app”.",
-            "Copy the Admin API access token (shown once) and the API secret key into this form.",
+            "Go to the Shopify Dev Dashboard (dev.shopify.com) and open your organization.",
+            "Click “Create app” → “Create app manually”, name it (e.g. EngageOS).",
+            "Under Configuration → Admin API access scopes, enable read access for products, orders, customers, inventory and discounts. Save.",
+            "Install the app on your store, then open the API credentials / Client credentials tab.",
+            "Copy the Client ID and Client secret into this form.",
           ].map((step, i) => (
             <li key={i} className="flex gap-2.5">
               <span className="flex items-center justify-center size-5 shrink-0 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-black">
@@ -284,12 +284,12 @@ function ConnectForm() {
           ))}
         </ol>
         <a
-          href="https://help.shopify.com/en/manual/apps/app-types/custom-apps"
+          href="https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/client-credentials-grant"
           target="_blank"
           rel="noopener noreferrer"
           className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 hover:text-emerald-800 transition"
         >
-          Shopify custom-app guide <ExternalLink className="size-3" />
+          Shopify Dev Dashboard guide <ExternalLink className="size-3" />
         </a>
       </div>
     </div>

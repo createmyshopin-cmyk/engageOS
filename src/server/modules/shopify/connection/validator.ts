@@ -1,21 +1,22 @@
 import { z } from "zod";
 
 /**
- * Zod validator for the Shopify custom-app connect endpoint. business_id is
+ * Zod validator for the Shopify Dev Dashboard connect endpoint. business_id is
  * NEVER accepted — it is derived from the authenticated principal. The merchant
- * supplies their own custom app's credentials (multi-tenant model); we validate
- * shape here and validate the token against the live Shopify API in the adapter.
+ * supplies their own Dev Dashboard app's Client ID + Client Secret (multi-tenant
+ * model); we validate shape here and validate the credentials against the live
+ * Shopify API (client-credentials grant) in the adapter.
  */
 
 const SHOP_DOMAIN_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
 
 /**
  * Body for POST /shopify/connect.
- *   - `shopDomain`  — the store's `*.myshopify.com` domain (accepts a pasted
+ *   - `shopDomain`   — the store's `*.myshopify.com` domain (accepts a pasted
  *     URL or bare handle; normalized + validated).
- *   - `accessToken` — the custom app's Admin API access token (`shpat_…`).
- *   - `apiSecret`   — the custom app's API secret key (used to verify inbound
- *     webhook HMACs for THIS store).
+ *   - `clientId`     — the Dev Dashboard app's Client ID (public half).
+ *   - `clientSecret` — the Dev Dashboard app's Client Secret (exchanged for a
+ *     short-lived token; also verifies inbound webhook HMACs for THIS store).
  */
 export const connectShopifyBody = z.object({
   shopDomain: z
@@ -29,13 +30,13 @@ export const connectShopifyBody = z.object({
       return d;
     })
     .refine((d) => SHOP_DOMAIN_RE.test(d), "Enter a valid myshopify.com domain"),
-  accessToken: z
+  clientId: z
     .string()
     .trim()
-    .min(10, "Enter the Admin API access token from your custom app"),
-  apiSecret: z
+    .min(10, "Enter the Client ID from your Dev Dashboard app"),
+  clientSecret: z
     .string()
     .trim()
-    .min(10, "Enter the API secret key from your custom app"),
+    .min(10, "Enter the Client Secret from your Dev Dashboard app"),
 });
 export type ConnectShopifyBody = z.infer<typeof connectShopifyBody>;

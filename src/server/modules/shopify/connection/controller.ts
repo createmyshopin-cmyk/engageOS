@@ -26,8 +26,8 @@ export class ShopifyConnectionController extends Controller {
 
   async connect(input: {
     shopDomain: string;
-    accessToken: string;
-    apiSecret: string;
+    clientId: string;
+    clientSecret: string;
   }): Promise<NextResponse> {
     requireRole(this.principal(), "owner", "manager");
     const data = await this.service.connect(input);

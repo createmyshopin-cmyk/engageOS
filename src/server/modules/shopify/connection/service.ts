@@ -9,9 +9,9 @@ import { SYNC_RESOURCES } from "@/lib/shopify/types";
 /**
  * ShopifyConnectionService — store-connection lifecycle for the merchant surface.
  *
- * Connection uses the CUSTOM-APP model (multi-tenant): the merchant creates a
- * custom app in their own Shopify admin and supplies its Admin API access token
- * + API secret. There is no global OAuth app. The service delegates to the
+ * Connection uses the DEV DASHBOARD model (multi-tenant): the merchant builds an
+ * app in Shopify's Dev Dashboard inside their own org and supplies its Client ID
+ * + Client Secret. There is no global OAuth app. The service delegates to the
  * Shopify adapter facade (the integration-layer equivalent of a repository —
  * service-role, business_id-scoped persistence kept OUT of TenantRepository,
  * exactly like the wacrm/wati integrations). Secrets are validated + encrypted
@@ -23,22 +23,23 @@ export class ShopifyConnectionService extends Service {
   }
 
   /**
-   * Connect the tenant's store from merchant-supplied custom-app credentials.
-   * The adapter validates the token against the live Shopify API before
-   * persisting (encrypted), then registers webhooks. On success we enqueue an
-   * initial sync per resource so the store starts filling in immediately. The
-   * tenant is the authenticated session, never input.
+   * Connect the tenant's store from merchant-supplied Dev Dashboard credentials.
+   * The adapter exchanges the Client ID/Secret for a short-lived token and
+   * validates it against the live Shopify API before persisting (encrypted),
+   * then registers webhooks. On success we enqueue an initial sync per resource
+   * so the store starts filling in immediately. The tenant is the authenticated
+   * session, never input.
    */
   async connect(input: {
     shopDomain: string;
-    accessToken: string;
-    apiSecret: string;
+    clientId: string;
+    clientSecret: string;
   }): Promise<{ connected: true; shopDomain: string; shopName: string }> {
     const result = await connectWithCredentials(
       this.businessId,
       input.shopDomain,
-      input.accessToken,
-      input.apiSecret
+      input.clientId,
+      input.clientSecret
     );
 
     // Kick off an initial sync for every resource (best-effort — a failure here

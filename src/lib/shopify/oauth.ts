@@ -116,3 +116,83 @@ export async function exchangeCodeForToken(
   }
   return { accessToken: body.access_token, scope: body.scope ?? cfg.scopes };
 }
+
+export interface ClientCredentialsResult {
+  accessToken: string;
+  scope: string;
+  /** Seconds until the token expires (Shopify returns ~86399 ≈ 24h). */
+  expiresIn: number;
+}
+
+/**
+ * Client-credentials grant — the token flow for apps built in Shopify's new Dev
+ * Dashboard (admin-created custom apps were retired 2026-01-01). The merchant's
+ * own app supplies a Client ID + Client Secret; we exchange them directly with
+ * the store for a SHORT-LIVED Admin API access token (no user interaction).
+ *
+ * Only works when the app and store are in the same Shopify organization, which
+ * is exactly our multi-tenant case: each merchant builds the app in their own
+ * org and installs it on their own store. Tokens last ~24h and are re-exchanged
+ * on demand (we never persist a permanent token in this model).
+ *
+ * CRITICAL: the body MUST be form-urlencoded — Shopify rejects application/json
+ * for this endpoint. Credentials come from the caller, NOT from env.
+ */
+export async function exchangeClientCredentials(
+  shop: string,
+  clientId: string,
+  clientSecret: string
+): Promise<ClientCredentialsResult> {
+  const domain = normalizeShopDomain(shop);
+  const res = await fetch(`https://${domain}/admin/oauth/access_token`, {
+    method: "POST",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+    }).toString(),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new ShopifyClientCredentialsError(res.status, detail.slice(0, 300));
+  }
+  const body = (await res.json()) as {
+    access_token?: string;
+    scope?: string;
+    expires_in?: number;
+  };
+  if (!body.access_token) {
+    throw new ShopifyClientCredentialsError(res.status, "no access_token in response");
+  }
+  return {
+    accessToken: body.access_token,
+    scope: body.scope ?? "",
+    expiresIn: typeof body.expires_in === "number" ? body.expires_in : 86_399,
+  };
+}
+
+/** Typed failure for the client-credentials exchange (maps to a merchant message). */
+export class ShopifyClientCredentialsError extends Error {
+  constructor(
+    readonly status: number,
+    readonly detail: string
+  ) {
+    super(`Shopify client-credentials exchange failed (${status}): ${detail}`);
+    this.name = "ShopifyClientCredentialsError";
+  }
+
+  /** 401 — bad client id/secret. */
+  get isAuthError(): boolean {
+    return this.status === 401;
+  }
+
+  /** 400 shop_not_permitted — app + store not in the same Shopify org. */
+  get isShopNotPermitted(): boolean {
+    return this.detail.includes("shop_not_permitted");
+  }
+}

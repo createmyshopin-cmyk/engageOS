@@ -40,6 +40,12 @@ export interface ShopifyShop {
   access_token_enc: string | null;
   scopes: string | null;
   webhook_secret_enc: string | null;
+  /** Dev Dashboard app Client ID (public half); null for legacy admin apps. */
+  client_id: string | null;
+  /** Encrypted Client Secret; also the webhook HMAC key for Dev Dashboard apps. */
+  client_secret_enc: string | null;
+  /** Expiry of the cached client-credentials token; null = legacy permanent token. */
+  token_expires_at: string | null;
   status: "active" | "paused" | "revoked";
   installed_at: string;
   created_at: string;
