@@ -32,9 +32,28 @@ import {
   X,
   KeyRound,
   ExternalLink,
+  Unplug,
 } from "lucide-react";
-import { useShopifyOverview, useConnectShopify } from "@/lib/api/hooks/use-shopify";
+import {
+  useShopifyOverview,
+  useConnectShopify,
+  useDisconnectShopify,
+} from "@/lib/api/hooks/use-shopify";
 import { ShopifySyncPanel } from "./shopify-sync-panel";
+
+/**
+ * The exact Admin API read scopes the sync engine needs — one per resource it
+ * pulls. Shown in the connect instructions so the merchant enables precisely
+ * these in their Dev Dashboard app (read-only; EngageOS never writes).
+ */
+const REQUIRED_SCOPES: Array<{ handle: string; for: string }> = [
+  { handle: "read_products", for: "Products" },
+  { handle: "read_orders", for: "Orders" },
+  { handle: "read_customers", for: "Customers" },
+  { handle: "read_inventory", for: "Inventory levels" },
+  { handle: "read_price_rules", for: "Discounts / price rules" },
+  { handle: "read_discounts", for: "Discount codes" },
+];
 
 function formatMoney(n: number): string {
   return new Intl.NumberFormat("en-IN", {
@@ -108,7 +127,7 @@ export function ShopifyView() {
                 <>
                   <p className="text-sm font-black text-neutral-900 truncate">{data.shop.domain}</p>
                   <p className="text-[11px] font-semibold text-neutral-500 mt-0.5">
-                    Installed {formatDate(data.shop.installedAt)}
+                    Installed {formatDate(data.shop.installedAt)} · access token auto-renews every 24h
                   </p>
                 </>
               ) : (
@@ -121,9 +140,12 @@ export function ShopifyView() {
               )}
             </div>
             {data?.connected && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
-                <CheckCircle2 className="size-3.5" /> Active
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1.5 text-[11px] font-bold text-emerald-700">
+                  <CheckCircle2 className="size-3.5" /> Active
+                </span>
+                <DisconnectButton />
+              </div>
             )}
           </div>
 
@@ -193,6 +215,13 @@ function ConnectForm() {
       : connect.isError
         ? "Could not connect the store. Check the credentials and try again."
         : null;
+
+  // On success the overview query is invalidated and the page flips to the
+  // connected surface — but show a celebratory animated tick in the meantime so
+  // the merchant gets immediate, satisfying confirmation.
+  if (connect.isSuccess) {
+    return <ConnectSuccess shopName={connect.data?.data?.shopName} />;
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
@@ -271,8 +300,8 @@ function ConnectForm() {
           {[
             "Go to the Shopify Dev Dashboard (dev.shopify.com) and open your organization.",
             "Click “Create app” → “Create app manually”, name it (e.g. EngageOS).",
-            "Under Configuration → Admin API access scopes, enable read access for products, orders, customers, inventory and discounts. Save.",
-            "Install the app on your store, then open the API credentials / Client credentials tab.",
+            "Open Configuration → Admin API access scopes and enable the scopes listed below. Save.",
+            "Install the app on your store (Overview → Install), then open the API credentials / Client credentials tab.",
             "Copy the Client ID and Client secret into this form.",
           ].map((step, i) => (
             <li key={i} className="flex gap-2.5">
@@ -283,6 +312,29 @@ function ConnectForm() {
             </li>
           ))}
         </ol>
+
+        {/* Required scopes — exactly what the sync engine reads */}
+        <div className="mt-4 rounded-2xl border border-neutral-200 bg-white p-3.5">
+          <p className="text-[11px] font-black text-neutral-800">
+            Admin API scopes to enable
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {REQUIRED_SCOPES.map((s) => (
+              <code
+                key={s.handle}
+                title={s.for}
+                className="rounded-md bg-neutral-100 px-2 py-1 text-[10px] font-bold text-neutral-700"
+              >
+                {s.handle}
+              </code>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] font-medium text-neutral-400 leading-relaxed">
+            Read-only — EngageOS never writes to your store. Missing a scope only
+            skips that resource; the rest still sync.
+          </p>
+        </div>
+
         <a
           href="https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/client-credentials-grant"
           target="_blank"
@@ -292,6 +344,99 @@ function ConnectForm() {
           Shopify Dev Dashboard guide <ExternalLink className="size-3" />
         </a>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Post-connect celebration card. Renders the animated tick + a reassuring line
+ * while the overview query refetches and the page swaps to the connected view.
+ */
+function ConnectSuccess({ shopName }: { shopName?: string }) {
+  return (
+    <div className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm flex flex-col items-center justify-center py-16 px-8 text-center">
+      <SuccessTick />
+      <h3 className="mt-5 font-black text-neutral-900 text-base">
+        {shopName ? `${shopName} connected!` : "Store connected!"}
+      </h3>
+      <p className="text-xs font-semibold text-neutral-500 max-w-xs mt-1.5">
+        Your first sync is starting — customers, products and orders will appear here shortly.
+      </p>
+      <span className="mt-4 inline-flex items-center gap-2 text-[11px] font-bold text-emerald-600">
+        <Loader2 className="size-3.5 animate-spin" /> Loading your dashboard…
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Pure-CSS animated success checkmark: an expanding ring pulse, a circle that
+ * pops in, and a tick that strokes itself on via stroke-dashoffset. GPU-friendly
+ * (transform/opacity + a single stroke animation), no JS timers.
+ */
+function SuccessTick() {
+  return (
+    <div className="relative flex items-center justify-center size-20">
+      <span className="absolute inset-0 rounded-full bg-emerald-400/40 [animation:var(--animate-tick-ring)]" />
+      <svg
+        viewBox="0 0 52 52"
+        className="relative size-20 [animation:var(--animate-tick-pop)]"
+        role="img"
+        aria-label="Store connected successfully"
+      >
+        <circle cx="26" cy="26" r="25" className="fill-emerald-50 stroke-emerald-500" strokeWidth="2" />
+        <path
+          d="M16 27 l7 7 l13 -14"
+          fill="none"
+          className="stroke-emerald-500 [stroke-dasharray:40] [stroke-dashoffset:40] [animation:var(--animate-tick-draw)]"
+          strokeWidth="3.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+}
+
+/**
+ * Top-of-page disconnect control (shown in the connection banner when a store is
+ * connected). Two-step confirm so a stray click can't revoke the integration.
+ * The sync panel keeps its own footer disconnect too; both hit the same mutation.
+ */
+function DisconnectButton() {
+  const disconnect = useDisconnectShopify();
+  const [confirm, setConfirm] = useState(false);
+
+  if (!confirm) {
+    return (
+      <button
+        onClick={() => setConfirm(true)}
+        className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 px-3 py-1.5 text-[11px] font-bold text-neutral-500 hover:border-red-200 hover:text-red-600 transition"
+      >
+        <Unplug className="size-3" /> Disconnect
+      </button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        onClick={() => disconnect.mutate()}
+        disabled={disconnect.isPending}
+        className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1.5 text-[11px] font-bold text-red-600 hover:bg-red-100 disabled:opacity-50 transition"
+      >
+        {disconnect.isPending ? (
+          <Loader2 className="size-3 animate-spin" />
+        ) : (
+          <Unplug className="size-3" />
+        )}
+        Confirm
+      </button>
+      <button
+        onClick={() => setConfirm(false)}
+        className="text-[11px] font-bold text-neutral-400 hover:text-neutral-600"
+      >
+        Cancel
+      </button>
     </div>
   );
 }

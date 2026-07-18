@@ -24,6 +24,11 @@
   --animate-glow: glow 2s ease-in-out infinite alternate;
   --animate-shimmer: shimmer 2.5s infinite linear;
 
+  /* Success checkmark: ring scales in, then the tick strokes itself on. */
+  --animate-tick-pop: tick-pop 380ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  --animate-tick-draw: tick-draw 420ms 220ms ease-out both;
+  --animate-tick-ring: tick-ring 600ms ease-out both;
+
   @keyframes float {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-8px); }
@@ -35,6 +40,17 @@
   @keyframes shimmer {
     0% { background-position: 200% 0; }
     100% { background-position: -200% 0; }
+  }
+  @keyframes tick-pop {
+    0% { transform: scale(0.4); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  @keyframes tick-draw {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes tick-ring {
+    0% { transform: scale(0.6); opacity: 0.9; }
+    100% { transform: scale(1.9); opacity: 0; }
   }
 }
 

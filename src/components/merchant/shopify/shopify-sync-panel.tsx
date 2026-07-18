@@ -4,13 +4,12 @@
  * ShopifySyncPanel — the operational Sync Engine dashboard for `/m/shopify`.
  *
  * Renders connection health, per-resource sync state with live progress, recent
- * sync jobs (logs), and the manual/selective trigger + disconnect controls. All
+ * sync jobs (logs), and the manual/selective trigger. All
  * data flows through the `use-shopify` React Query hooks against
  * `/api/v1/shopify/sync*`; no direct fetch, no DB access, no tenant id sent. The
  * bundle self-polls while a job is running so progress ticks without a refresh.
  */
 
-import { useState } from "react";
 import {
   RefreshCw,
   Loader2,
@@ -19,7 +18,6 @@ import {
   Clock,
   Activity,
   Webhook,
-  Unplug,
   Users,
   Package,
   ShoppingBag,
@@ -30,7 +28,6 @@ import {
 import {
   useShopifySync,
   useTriggerShopifySync,
-  useDisconnectShopify,
 } from "@/lib/api/hooks/use-shopify";
 import type {
   ShopifyResourceSyncStateDTO,
@@ -70,8 +67,6 @@ const STATUS_TONE: Record<string, string> = {
 export function ShopifySyncPanel() {
   const { data, isLoading, isError, refetch, isFetching } = useShopifySync();
   const trigger = useTriggerShopifySync();
-  const disconnect = useDisconnectShopify();
-  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
   if (isLoading) return <PanelSkeleton />;
   if (isError || !data) {
@@ -226,40 +221,6 @@ export function ShopifySyncPanel() {
               <JobRow key={job.id} job={job} />
             ))}
           </ul>
-        )}
-      </div>
-
-      {/* Disconnect */}
-      <div className="flex items-center justify-end">
-        {confirmDisconnect ? (
-          <div className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold text-neutral-500">Disconnect store?</span>
-            <button
-              onClick={() => disconnect.mutate()}
-              disabled={disconnect.isPending}
-              className="inline-flex items-center gap-1.5 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50"
-            >
-              {disconnect.isPending ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : (
-                <Unplug className="size-3" />
-              )}
-              Yes, disconnect
-            </button>
-            <button
-              onClick={() => setConfirmDisconnect(false)}
-              className="text-[11px] font-bold text-neutral-400 hover:text-neutral-600"
-            >
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => setConfirmDisconnect(true)}
-            className="inline-flex items-center gap-1.5 text-[11px] font-bold text-neutral-400 hover:text-red-600 transition"
-          >
-            <Unplug className="size-3" /> Disconnect store
-          </button>
         )}
       </div>
     </div>

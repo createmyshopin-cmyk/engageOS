@@ -16,7 +16,12 @@ import type { ShopifyPage } from "@/lib/shopify/types";
  * rather than hammering the bucket.
  */
 
-export const SHOPIFY_API_VERSION = "2025-01";
+/**
+ * The Shopify Admin API version this client targets. Shopify ships a new stable
+ * version quarterly (Jan/Apr/Jul/Oct); we track the latest. Bump this each
+ * quarter — the oauth/token endpoints below are unversioned and unaffected.
+ */
+export const SHOPIFY_API_VERSION = "2026-07";
 
 export class ShopifyApiError extends Error {
   constructor(
