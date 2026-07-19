@@ -127,6 +127,8 @@ export default async function PlayPage({ params, searchParams }: PageProps) {
   for (const url of prizeImages) {
     ReactDOM.preload(url, { as: "image" });
   }
+  // Prefetch foil scratch SFX so the first stroke has no network delay
+  ReactDOM.preload("/scratch-fx.mp3", { as: "audio" });
 
   return (
     <Shell>
