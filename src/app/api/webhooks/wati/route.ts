@@ -21,7 +21,7 @@ import { resolveWatiTenant, processWatiWebhook } from "@/lib/wati/webhook";
 export const runtime = "nodejs";
 // after() runs within this route's max duration; give the async
 // coupon/receipt writes headroom beyond the platform default.
-export const maxDuration = 60;
+export const maxDuration = 10;
 
 /** Accept the token from Authorization header (production) or query (dev only). */
 function readToken(request: NextRequest): string | null {

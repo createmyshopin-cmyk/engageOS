@@ -14,7 +14,7 @@ import { SYNC_RESOURCES } from "@/lib/shopify/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 10;
 
 /**
  * GET /api/shopify/callback — OAuth redirect target.

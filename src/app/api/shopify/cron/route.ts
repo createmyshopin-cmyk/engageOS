@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 // The scheduler drains a bounded slice of the queue per invocation (each sync
 // job itself yields after MAX_PAGES_PER_SLICE and re-queues), so no single tick
 // runs long — but give headroom for the enqueue pass + a few job slices.
-export const maxDuration = 300;
+export const maxDuration = 10;
 
 /**
  * GET /api/shopify/cron — the sync scheduler tick.

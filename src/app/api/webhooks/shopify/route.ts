@@ -27,7 +27,7 @@ import { createLogger, newCorrelationId } from "@/server/observability/logger";
  */
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 10;
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const correlationId = newCorrelationId();

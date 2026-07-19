@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // Connect exchanges the client credentials for a token against the live Shopify
 // API and registers webhooks inline, so allow headroom for those round-trips.
-export const maxDuration = 60;
+export const maxDuration = 10;
 
 /**
  * Shopify connect — /api/v1/shopify/connect

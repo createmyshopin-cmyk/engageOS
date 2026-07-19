@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // Trigger enqueues fast and returns; the actual pull runs in `after()`, but we
 // allow headroom for the enqueue fan-out + the first background slice to start.
-export const maxDuration = 60;
+export const maxDuration = 10;
 
 /**
  * Shopify sync control — /api/v1/shopify/sync

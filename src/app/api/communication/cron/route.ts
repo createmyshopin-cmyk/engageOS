@@ -5,7 +5,7 @@ import { createLogger, newCorrelationId } from "@/server/observability/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 10;
 
 /**
  * GET /api/communication/cron — drain communication_dispatch_jobs and run
