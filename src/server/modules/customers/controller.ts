@@ -134,7 +134,7 @@ export class CustomerController extends Controller {
         payload: {
           customerId: customer.id,
           phone: customer.phone,
-          customerName: customer.name,
+          customerName: customer.name ?? undefined,
         },
       });
     });
