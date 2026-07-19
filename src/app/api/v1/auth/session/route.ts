@@ -1,27 +1,31 @@
-import { defineRoute, NotImplementedError } from "@/server";
+import { defineRoute } from "@/server";
+import { UnauthorizedError } from "@/server/core/errors";
 
 /**
- * Auth module — /api/v1/auth
+ * Auth module — GET /api/v1/auth/session
  *
- * SCAFFOLD. The EXISTING cookie-session login/logout flow stays authoritative
- * and is NOT reimplemented here. This surface exposes read-only session
- * introspection for API clients (dashboard, mobile) plus the future API-key
- * lifecycle — issuance tables are deferred per the approved plan.
- *
- * Planned surface:
- *   GET  /api/v1/auth/session          → current principal (kind, businessId, role, scopes)
- *   POST /api/v1/auth/logout           → clear session (delegates to existing flow)
- *   -- deferred: /api/v1/auth/keys (issue/revoke API keys) --
- *
- * The Bearer API-key resolver slots into the auth guard's RESOLVERS chain
- * without any change to controllers; see src/server/auth/guard.ts.
+ * Read-only session introspection for API clients (dashboard, mobile,
+ * automations). Returns the authenticated principal derived server-side —
+ * businessId is NEVER read from the request.
  */
-
 export const GET = defineRoute({
+  auth: true,
   handler: async ({ ctx }) => {
-    // Contract preview: once implemented this returns the authenticated
-    // principal. For now the scaffold advertises the shape via 501.
-    void ctx;
-    throw new NotImplementedError("auth.session is not implemented yet");
+    const principal = ctx.principal;
+    if (!principal) throw new UnauthorizedError();
+
+    return {
+      kind: principal.kind,
+      businessId: principal.businessId,
+      actorId: principal.actorId,
+      role: principal.role,
+      scopes: [...principal.scopes],
+      merchant: principal.session
+        ? {
+            name: principal.session.name,
+            email: principal.session.email,
+          }
+        : null,
+    };
   },
 });

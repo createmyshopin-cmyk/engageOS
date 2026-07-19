@@ -28,8 +28,20 @@ import {
   Sparkle,
   ShieldCheck,
   AlertTriangle,
+  Copy,
+  Link2,
+  Globe,
+  Radio,
+  Ticket,
+  Package,
 } from "lucide-react";
 import { createCampaignAction } from "@/app/m/campaigns/actions";
+import { slugify } from "@/lib/validation";
+import {
+  formatBytes,
+  processCampaignBanner,
+  processCampaignLogo,
+} from "@/lib/images/process-campaign-images";
 
 /* ── Types ───────────────────────────────────────────── */
 type PrizeType =
@@ -126,14 +138,42 @@ interface CampaignTypeOption {
 }
 
 /* ── Wizard Steps ────────────────────────────────────── */
-const STEPS = [
-  { id: 1, label: "Basic Info", sub: "Campaign details" },
-  { id: 2, label: "Campaign Type", sub: "Select game type" },
-  { id: 3, label: "Rewards", sub: "Add prizes & coupons" },
-  { id: 4, label: "Coupons", sub: "Upload or generate" },
-  { id: 5, label: "Duration", sub: "Set campaign period" },
-  { id: 6, label: "Preview", sub: "Review & publish" },
-];
+type WizardStepKey = "type" | "basic" | "rewards" | "coupons" | "settings" | "duration" | "preview";
+
+const STEP_META: Record<WizardStepKey, { label: string; sub: string }> = {
+  type: { label: "Campaign Type", sub: "Select game type" },
+  basic: { label: "Basic Info", sub: "Campaign details" },
+  rewards: { label: "Rewards", sub: "Add prizes & coupons" },
+  coupons: { label: "Coupons", sub: "Upload or generate" },
+  settings: { label: "Settings", sub: "Coupon & discount rules" },
+  duration: { label: "Duration", sub: "Set campaign period" },
+  preview: { label: "Preview", sub: "Review & publish" },
+};
+
+const STANDARD_FLOW: WizardStepKey[] = ["type", "basic", "rewards", "coupons", "duration", "preview"];
+const COUPON_DROP_FLOW: WizardStepKey[] = ["type", "basic", "settings", "preview"];
+
+function getWizardFlow(campaignType: CampaignType): WizardStepKey[] {
+  return campaignType === "coupon_drop" ? COUPON_DROP_FLOW : STANDARD_FLOW;
+}
+
+function buildCouponDropDefaultPrize(rules: CouponRules): PrizeRow {
+  const label =
+    rules.discount_type === "percentage"
+      ? `${rules.discount_value}% OFF Coupon`
+      : `₹${rules.discount_value} OFF Coupon`;
+  return {
+    name: label,
+    weight: 100,
+    total_quantity: rules.pool_target,
+    expiry_days: rules.expiry_days ?? 30,
+    prize_type: "coupon",
+    prize_value: null,
+    discount_type: rules.discount_type,
+    discount_value: rules.discount_value,
+    is_fallback: false,
+  };
+}
 
 /* ── Campaign Type Data ────────────────────────────── */
 const CAMPAIGN_TYPES: CampaignTypeOption[] = [
@@ -223,8 +263,28 @@ function todayISO() {
 }
 
 const DEFAULT_PRIZES: PrizeRow[] = [
-  { name: "10% OFF Coupon", weight: 100, total_quantity: 200, expiry_days: 30, prize_type: "coupon", prize_value: null, discount_type: "percentage", discount_value: 10, is_fallback: false },
-  { name: "5% OFF Coupon", weight: 200, total_quantity: 400, expiry_days: 30, prize_type: "coupon", prize_value: null, discount_type: "percentage", discount_value: 5, is_fallback: false },
+  {
+    name: "10% OFF Coupon",
+    weight: 100,
+    total_quantity: 100,
+    expiry_days: 30,
+    prize_type: "coupon",
+    prize_value: null,
+    discount_type: "percentage",
+    discount_value: 10,
+    is_fallback: false,
+  },
+  {
+    name: "Gift Hamper",
+    weight: 150,
+    total_quantity: 150,
+    expiry_days: 30,
+    prize_type: "physical_gift",
+    prize_value: null,
+    discount_type: null,
+    discount_value: null,
+    is_fallback: false,
+  },
 ];
 
 const DEFAULT_BANNER = "https://images.unsplash.com/photo-1607082348824-0a96f2a4b9da?auto=format&fit=crop&w=1200&q=80";
@@ -237,7 +297,37 @@ const SMART_TIPS = [
   "Keep your logo high contrast to build brand recognition on customer receipt scans.",
 ];
 
-export function CampaignWizard() {
+function formatShortDate(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+}
+
+function sourceSlugify(input: string): string {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+function isValidCampaignSlug(value: string): boolean {
+  return /^[a-z0-9-]{2,40}$/.test(value);
+}
+
+function isValidSourceSlug(value: string): boolean {
+  return /^[a-z0-9_-]{1,40}$/.test(value);
+}
+
+export function CampaignWizard({
+  shopifyConnected,
+  merchantSlug,
+  baseUrl,
+}: {
+  shopifyConnected: boolean;
+  merchantSlug: string;
+  baseUrl: string;
+}) {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [selectedType, setSelectedType] = useState<CampaignType>("scratch_win");
@@ -250,13 +340,26 @@ export function CampaignWizard() {
   const [name, setName] = useState("Onam Mega Scratch & Win");
   const [description, setDescription] = useState("Play, scratch and win exciting offers this Onam!");
   const [bannerUrl, setBannerUrl] = useState(DEFAULT_BANNER);
+  const [ogImageUrl, setOgImageUrl] = useState("");
+  const [bannerMeta, setBannerMeta] = useState<{ originalBytes: number; bannerBytes: number } | null>(
+    null
+  );
+  const [bannerProcessing, setBannerProcessing] = useState(false);
+  const [logoProcessing, setLogoProcessing] = useState(false);
   const [logoUrl, setLogoUrl] = useState(DEFAULT_LOGO);
   const [headline, setHeadline] = useState("Scratch & Win this Onam! 🎁");
   const [terms, setTerms] = useState("1. One scratch card per customer.\n2. Coupons valid for 30 days.");
   const [couponPrefix, setCouponPrefix] = useState("SINDUR");
+  const [campaignSlug, setCampaignSlug] = useState("");
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [addSourceUrl, setAddSourceUrl] = useState(false);
+  const [sourceLabel, setSourceLabel] = useState("");
+  const [sourceSlug, setSourceSlug] = useState("");
+  const [sourceSlugTouched, setSourceSlugTouched] = useState(false);
   const [startsAt, setStartsAt] = useState(new Date().toISOString().slice(0, 10));
   const [endsAt, setEndsAt] = useState(futureISO(30));
   const [prizes, setPrizes] = useState<PrizeRow[]>(DEFAULT_PRIZES);
+  const [quickAddType, setQuickAddType] = useState<"coupon" | "physical_gift">("coupon");
 
   // Coupon Drop discount rules (only sent when selectedType === 'coupon_drop').
   const [couponRules, setCouponRules] = useState<CouponRules>(DEFAULT_COUPON_RULES);
@@ -264,6 +367,18 @@ export function CampaignWizard() {
   // Custom UI state
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [tipIndex, setTipIndex] = useState(0);
+
+  useEffect(() => {
+    if (!slugTouched) {
+      setCampaignSlug(slugify(name));
+    }
+  }, [name, slugTouched]);
+
+  useEffect(() => {
+    if (addSourceUrl && !sourceSlugTouched) {
+      setSourceSlug(sourceSlugify(sourceLabel || name || "direct"));
+    }
+  }, [addSourceUrl, sourceLabel, name, sourceSlugTouched]);
 
   // Auto-save interval (15s)
   useEffect(() => {
@@ -291,21 +406,50 @@ export function CampaignWizard() {
     return d.toISOString().slice(0, 10);
   }
 
+  const resolvedCampaignSlug = campaignSlug.trim() || slugify(name) || "campaign";
+
   // Calculate completion percentage
   const calculateScore = () => {
     let score = 0;
-    if (name.trim().length > 3) score += 20;
-    if (description.trim().length > 10) score += 20;
-    if (bannerUrl) score += 25;
-    if (logoUrl) score += 15;
+    if (name.trim().length > 3) score += 15;
+    if (description.trim().length > 10) score += 15;
+    if (isValidCampaignSlug(resolvedCampaignSlug)) score += 15;
+    if (bannerUrl) score += 20;
+    if (logoUrl) score += 10;
     if (prizes.length > 0) score += 10;
-    if (couponPrefix) score += 10;
-    return score;
+    if (couponPrefix) score += 5;
+    if (startsAt !== endsAt) score += 10;
+    return Math.min(score, 100);
   };
 
   const score = calculateScore();
 
+  const playUrl = `${baseUrl}/c/${merchantSlug}/${resolvedCampaignSlug}`;
+  const resolvedSourceSlug = sourceSlugTouched
+    ? sourceSlug.trim().toLowerCase()
+    : sourceSlugify(sourceLabel || name || "direct");
+  const trackedSourceUrl =
+    addSourceUrl && resolvedSourceSlug ? `${playUrl}?src=${resolvedSourceSlug}` : null;
+
   const selectedCampaignOption = CAMPAIGN_TYPES.find((t) => t.id === selectedType)!;
+  const availableCampaignTypes = CAMPAIGN_TYPES.filter(
+    (type) => type.id !== "coupon_drop" || shopifyConnected
+  );
+  const flow = getWizardFlow(selectedType);
+  const currentStepKey = flow[step - 1] ?? "type";
+  const isLastStep = step === flow.length;
+  const nextStepKey = flow[step];
+  const continueLabel = nextStepKey ? `Continue to ${STEP_META[nextStepKey].label}` : "Save & Continue";
+
+  useEffect(() => {
+    if (!shopifyConnected && selectedType === "coupon_drop") {
+      setSelectedType("scratch_win");
+    }
+  }, [shopifyConnected, selectedType]);
+
+  useEffect(() => {
+    setStep((s) => Math.min(s, flow.length));
+  }, [flow.length]);
 
   function updatePrize(index: number, field: keyof PrizeRow, value: string | number) {
     const updated = [...prizes];
@@ -314,7 +458,31 @@ export function CampaignWizard() {
   }
 
   function addPrize() {
-    setPrizes([...prizes, { name: "", weight: 50, total_quantity: 100, expiry_days: 30, prize_type: "coupon", prize_value: null, discount_type: "percentage", discount_value: null, is_fallback: false }]);
+    const template: PrizeRow =
+      quickAddType === "physical_gift"
+        ? {
+            name: "",
+            weight: 50,
+            total_quantity: 50,
+            expiry_days: 30,
+            prize_type: "physical_gift",
+            prize_value: null,
+            discount_type: null,
+            discount_value: null,
+            is_fallback: false,
+          }
+        : {
+            name: "",
+            weight: 50,
+            total_quantity: 100,
+            expiry_days: 30,
+            prize_type: "coupon",
+            prize_value: null,
+            discount_type: "percentage",
+            discount_value: 10,
+            is_fallback: false,
+          };
+    setPrizes([...prizes, template]);
   }
 
   function removePrize(index: number) {
@@ -327,12 +495,22 @@ export function CampaignWizard() {
   }
 
   function next() {
-    if (step === 1) {
+    if (currentStepKey === "basic") {
       if (!name.trim()) return;
       if (!description.trim()) return;
       if (!bannerUrl) return;
+      if (!isValidCampaignSlug(resolvedCampaignSlug)) return;
+      if (addSourceUrl) {
+        if (!sourceLabel.trim()) return;
+        if (!isValidSourceSlug(resolvedSourceSlug)) return;
+      }
     }
-    setStep((s) => Math.min(s + 1, STEPS.length));
+    if (currentStepKey === "settings") {
+      if (!couponPrefix.trim()) return;
+      if (couponRules.discount_value <= 0) return;
+      if (startsAt >= endsAt) return;
+    }
+    setStep((s) => Math.min(s + 1, flow.length));
   }
   function back() {
     setStep((s) => Math.max(s - 1, 1));
@@ -341,56 +519,95 @@ export function CampaignWizard() {
   function handleBannerUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
 
-    if (file.size > 2 * 1024 * 1024) {
-      alert("Image size should be less than 2MB");
+    if (!file.type.startsWith("image/")) {
+      alert("Please select a JPG, PNG, or WEBP image.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Image must be 10 MB or smaller.");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setBannerUrl(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    setBannerProcessing(true);
+    void processCampaignBanner(file)
+      .then((result) => {
+        setBannerUrl(result.bannerDataUrl);
+        setOgImageUrl(result.ogImageDataUrl);
+        setBannerMeta({
+          originalBytes: result.originalBytes,
+          bannerBytes: result.bannerBytes,
+        });
+      })
+      .catch(() => {
+        alert("Failed to process image. Try another file.");
+      })
+      .finally(() => {
+        setBannerProcessing(false);
+      });
   }
 
   function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
 
-    if (file.size > 1 * 1024 * 1024) {
-      alert("Logo size should be less than 1MB");
+    if (!file.type.startsWith("image/")) {
+      alert("Please select a JPG, PNG, or WEBP image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Logo must be 5 MB or smaller.");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setLogoUrl(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    setLogoProcessing(true);
+    void processCampaignLogo(file)
+      .then((result) => {
+        setLogoUrl(result.logoDataUrl);
+      })
+      .catch(() => {
+        alert("Failed to process logo. Try another file.");
+      })
+      .finally(() => {
+        setLogoProcessing(false);
+      });
+  }
+
+  function clearBanner() {
+    setBannerUrl("");
+    setOgImageUrl("");
+    setBannerMeta(null);
   }
 
   function publish(asDraft = false) {
     setServerError(null);
+    const prizesToSubmit =
+      selectedType === "coupon_drop" ? [buildCouponDropDefaultPrize(couponRules)] : prizes;
     startTransition(async () => {
       const result = await createCampaignAction(undefined as any, {
         name,
         headline,
         description,
         banner_url: bannerUrl,
+        og_image_url: ogImageUrl || undefined,
         logo_url: logoUrl,
         terms,
         coupon_prefix: couponPrefix,
         starts_at: new Date(startsAt),
         ends_at: new Date(endsAt),
-        prizes,
+        prizes: prizesToSubmit,
         campaign_type: selectedType,
+        slug: resolvedCampaignSlug,
+        source_label: addSourceUrl ? sourceLabel.trim() : undefined,
+        source_slug: addSourceUrl ? resolvedSourceSlug : undefined,
         coupon_rules: selectedType === "coupon_drop" ? couponRules : undefined,
         publish: !asDraft,
       });
       if (result.error) {
         setServerError(result.error);
-        setStep(6);
+        setStep(flow.length);
       } else {
         setPublishedStatus((result.status as typeof publishedStatus) ?? (asDraft ? "draft" : "active"));
         setPublished(true);
@@ -475,11 +692,13 @@ export function CampaignWizard() {
       {/* ── Stepper ── */}
       <section className="bg-white border-b border-[#E5E7EB] px-6 lg:px-10 py-5">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 overflow-x-auto">
-          {STEPS.map((s) => {
-            const done = step > s.id;
-            const current = step === s.id;
+          {flow.map((key, index) => {
+            const stepNum = index + 1;
+            const meta = STEP_META[key];
+            const done = step > stepNum;
+            const current = step === stepNum;
             return (
-              <div key={s.id} className="flex items-center gap-3 flex-1 min-w-[140px] last:flex-none">
+              <div key={key} className="flex items-center gap-3 flex-1 min-w-[140px] last:flex-none">
                 <div className="flex items-center gap-2">
                   <div
                     className={`flex items-center justify-center size-7 rounded-full text-xs font-black transition-all ${done
@@ -489,18 +708,18 @@ export function CampaignWizard() {
                           : "bg-neutral-100 text-neutral-400"
                       }`}
                   >
-                    {done ? <Check className="size-4" /> : s.id}
+                    {done ? <Check className="size-4" /> : stepNum}
                   </div>
                   <div>
                     <span className={`block text-xs font-bold ${current ? "text-neutral-900" : "text-neutral-400"}`}>
-                      {s.label}
+                      {meta.label}
                     </span>
                     <span className="block text-[10px] text-neutral-400 leading-tight">
-                      {done ? "Completed" : s.sub}
+                      {done ? "Completed" : meta.sub}
                     </span>
                   </div>
                 </div>
-                {s.id < STEPS.length && (
+                {stepNum < flow.length && (
                   <div className="h-px bg-neutral-200 flex-1 hidden md:block" />
                 )}
               </div>
@@ -509,7 +728,7 @@ export function CampaignWizard() {
         </div>
       </section>
 
-      {/* ── Main Layout (Three Columns for Step 1) ── */}
+      {/* ── Main Layout ── */}
       <main className="max-w-7xl mx-auto px-6 lg:px-10 py-8">
         <AnimatePresence mode="wait">
           <motion.div
@@ -519,248 +738,8 @@ export function CampaignWizard() {
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.15 }}
           >
-            {/* STEP 1 Layout */}
-            {step === 1 && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                {/* Column 1: Form (lg:col-span-5) */}
-                <div className="lg:col-span-5 bg-white rounded-3xl border border-neutral-200 shadow-sm p-6 space-y-6">
-                  <div>
-                    <h2 className="text-lg font-black text-neutral-900 tracking-tight">Basic Information</h2>
-                    <p className="text-xs text-neutral-500 mt-0.5">Enter the basic details of your campaign.</p>
-                  </div>
-
-                  <Field label="Campaign Name *">
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={name}
-                        onChange={(e) => setName(e.target.value.slice(0, 60))}
-                        placeholder="e.g. Onam Mega Scratch & Win"
-                        className={inputCls}
-                        maxLength={60}
-                        aria-label="Campaign Name"
-                      />
-                      <span className="absolute right-3 bottom-2.5 text-[10px] text-neutral-400 font-bold">
-                        {name.length}/60
-                      </span>
-                    </div>
-                  </Field>
-
-                  <Field label="Short Description *">
-                    <div className="relative">
-                      <textarea
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value.slice(0, 120))}
-                        placeholder="Describe the campaign briefly..."
-                        rows={3}
-                        className={inputCls + " resize-none pr-12"}
-                        maxLength={120}
-                        aria-label="Short Description"
-                      />
-                      <span className="absolute right-3 bottom-2.5 text-[10px] text-neutral-400 font-bold">
-                        {description.length}/120
-                      </span>
-                    </div>
-                  </Field>
-
-                  {/* Banner Upload */}
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-neutral-700">Campaign Banner *</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {bannerUrl ? (
-                        <div className="relative h-28 rounded-2xl overflow-hidden border border-neutral-200 group">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={bannerUrl} alt="Banner" className="w-full h-full object-cover" />
-                          <div className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-2 transition-opacity duration-200">
-                            <label className="text-[10px] font-bold bg-white text-neutral-900 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-neutral-100">
-                              Replace
-                              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleBannerUpload} className="hidden" />
-                            </label>
-                            <button
-                              onClick={() => setBannerUrl("")}
-                              className="text-[10px] font-bold bg-red-600 text-white rounded-lg px-2.5 py-1.5 hover:bg-red-700 cursor-pointer"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <label className="h-28 rounded-2xl border-2 border-dashed border-neutral-200 hover:border-neutral-300 flex flex-col items-center justify-center cursor-pointer transition-colors p-4">
-                          <Upload className="size-5 text-neutral-400 mb-1.5" />
-                          <span className="text-[11px] font-bold text-neutral-700">Click to upload</span>
-                          <span className="text-[9px] text-neutral-400 mt-0.5">or drag and drop</span>
-                          <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleBannerUpload} className="hidden" />
-                        </label>
-                      )}
-                      <div className="text-[10px] text-neutral-400 leading-relaxed flex flex-col justify-center">
-                        <p>Recommended size: 1200 x 600px.</p>
-                        <p>Format: JPG, PNG, WEBP.</p>
-                        <p>Max size: 2MB.</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Logo Upload */}
-                  <div className="space-y-2">
-                    <label className="block text-xs font-bold text-neutral-700">Campaign Logo (Optional)</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {logoUrl ? (
-                        <div className="relative size-20 rounded-2xl overflow-hidden border border-neutral-200 group">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
-                          <div className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity duration-200">
-                            <label className="text-[9px] font-bold bg-white text-neutral-900 rounded-md px-1.5 py-1 cursor-pointer">
-                              Replace
-                              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleLogoUpload} className="hidden" />
-                            </label>
-                          </div>
-                        </div>
-                      ) : (
-                        <label className="size-20 rounded-2xl border-2 border-dashed border-neutral-200 hover:border-neutral-300 flex flex-col items-center justify-center cursor-pointer transition-colors">
-                          <Upload className="size-4 text-neutral-400 mb-1" />
-                          <span className="text-[9px] font-bold text-neutral-700">Upload Logo</span>
-                          <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleLogoUpload} className="hidden" />
-                        </label>
-                      )}
-                      <div className="text-[10px] text-neutral-400 leading-relaxed flex flex-col justify-center">
-                        <p>Square image format.</p>
-                        <p>Max size: 1MB.</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Column 2: Live Mobile Preview (lg:col-span-4) */}
-                <div className="lg:col-span-4 flex flex-col gap-6">
-                  <div>
-                    <h2 className="text-lg font-black text-neutral-900 tracking-tight">Live Preview</h2>
-                    <p className="text-xs text-neutral-500 mt-0.5">This is how your campaign will appear to customers.</p>
-                  </div>
-
-                  {/* iPhone Mockup Frame */}
-                  <div className="relative mx-auto w-full max-w-[280px] aspect-[9/18.5] bg-black rounded-[38px] p-2.5 shadow-2xl ring-1 ring-neutral-900/10">
-                    {/* Speaker notch */}
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2 w-28 h-4.5 bg-black rounded-full z-20 flex items-center justify-center">
-                      <div className="w-10 h-1 bg-neutral-800 rounded-full" />
-                    </div>
-
-                    {/* Preview Screen */}
-                    <div className="w-full h-full bg-[#F8FAFC] rounded-[30px] overflow-hidden flex flex-col relative select-none">
-                      {/* Status bar spacer */}
-                      <div className="h-6 bg-transparent" />
-
-                      {/* Mock Banner */}
-                      <div className="h-28 bg-neutral-900 relative overflow-hidden shrink-0">
-                        {bannerUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={bannerUrl} alt="Preview Banner" className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-neutral-800 to-neutral-900">
-                            <span className="text-[10px] text-white/20 font-bold uppercase tracking-wider">No Banner Image</span>
-                          </div>
-                        )}
-                        {/* Logo overlay on banner */}
-                        {logoUrl && (
-                          <div className="absolute bottom-2 left-3 size-8 rounded-lg overflow-hidden border border-white bg-white shadow-sm">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={logoUrl} alt="Preview Logo" className="w-full h-full object-cover" />
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Content */}
-                      <div className="p-3 flex-1 flex flex-col gap-2.5 overflow-y-auto">
-                        <div>
-                          <h3 className="text-xs font-black text-neutral-900 leading-tight">
-                            {name || "Campaign Name"}
-                          </h3>
-                          <p className="text-[10px] text-neutral-500 mt-0.5 leading-normal">
-                            {description || "Campaign short description goes here..."}
-                          </p>
-                        </div>
-
-                        {/* List items */}
-                        <div className="space-y-1.5">
-                          <PreviewInfoRow emoji="🎫" label="Game Type" val={selectedCampaignOption.title} />
-                          <PreviewInfoRow emoji="📅" label="Duration" val="25 Aug 2025 - 15 Sep 2025" />
-                          <PreviewInfoRow emoji="🎁" label="Rewards" val="Exciting Coupons & Prizes" />
-                          <PreviewInfoRow emoji="✨" label="Tagline" val="Every Scratch is a Winner!" />
-                        </div>
-
-                        {/* Action Button */}
-                        <button className="mt-auto w-full bg-[#16A34A] text-white text-[11px] font-black py-2 rounded-xl text-center shadow-md shadow-green-500/20 cursor-default">
-                          Play Now
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Rotating tip banner */}
-                  <div className="bg-[#DCFCE7]/20 border border-[#16A34A]/10 rounded-2xl p-4 flex gap-3 items-start select-none">
-                    <span className="text-base shrink-0">💡</span>
-                    <div className="text-left">
-                      <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Tip</p>
-                      <p className="text-xs text-neutral-700 font-semibold mt-0.5 leading-relaxed">
-                        {SMART_TIPS[tipIndex]}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Column 3: Campaign Summary (lg:col-span-3) */}
-                <div className="lg:col-span-3 space-y-6">
-                  <div>
-                    <h2 className="text-lg font-black text-neutral-900 tracking-tight">Campaign Summary</h2>
-                    <p className="text-xs text-neutral-500 mt-0.5">Review your campaign details.</p>
-                  </div>
-
-                  {/* Summary Card */}
-                  <div className="bg-white rounded-3xl border border-neutral-200 shadow-sm p-5 space-y-4">
-                    <SummaryRow icon={<Megaphone className="size-4 text-neutral-500" />} label="Campaign Name" val={name || "To be added"} />
-                    <SummaryRow icon={<FileText className="size-4 text-[#16A34A]" />} label="Campaign Type" badge={selectedCampaignOption.title} />
-                    <SummaryRow icon={<CalendarDays className="size-4 text-neutral-500" />} label="Duration" val="25 Aug 2025 - 15 Sep 2025" />
-                    <SummaryRow icon={<Gift className="size-4 text-neutral-500" />} label="Rewards" val="To be added" />
-                    <SummaryRow icon={<Tag className="size-4 text-neutral-500" />} label="Coupons" val="To be added" />
-                    <SummaryRow icon={<ShieldCheck className="size-4 text-neutral-500" />} label="Status" badge="Draft" />
-
-                    <div className="pt-4 border-t border-neutral-100 space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] font-bold text-neutral-700">
-                        <span>Campaign Completion Score</span>
-                        <span>{score}%</span>
-                      </div>
-                      <div className="h-2 bg-neutral-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-[#16A34A] rounded-full transition-all duration-500" style={{ width: `${score}%` }} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Reach / Improvement checklist */}
-                  <div className="bg-white rounded-3xl border border-neutral-200 shadow-sm p-5 space-y-4">
-                    <div>
-                      <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Estimated Reach</p>
-                      <p className="text-lg font-black text-neutral-950 mt-1">350–500 Customers</p>
-                      <p className="text-[10px] text-neutral-400 leading-normal mt-0.5">Based on campaign optimization checklist criteria.</p>
-                    </div>
-
-                    <div className="h-px bg-neutral-100" />
-
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Recommended checklist</p>
-                      <div className="space-y-2">
-                        <CheckItem checked={name.trim().length > 3} text="Optimal campaign name" />
-                        <CheckItem checked={description.trim().length > 10} text="Add a stronger description" />
-                        <CheckItem checked={!!bannerUrl} text="Upload a high-quality banner" />
-                        <CheckItem checked={prizes.length > 0} text="Add campaign rewards" />
-                        <CheckItem checked={startsAt !== endsAt} text="Duration period configured" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 2 Layout (Campaign Type Redesign) */}
-            {step === 2 && (
+            {/* STEP: Campaign Type */}
+            {currentStepKey === "type" && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
                 <div className="lg:col-span-2 space-y-6">
                   <div>
@@ -769,7 +748,7 @@ export function CampaignWizard() {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                    {CAMPAIGN_TYPES.map((option) => {
+                    {availableCampaignTypes.map((option) => {
                       const isSelected = selectedType === option.id;
                       return (
                         <div
@@ -878,149 +857,864 @@ export function CampaignWizard() {
               </div>
             )}
 
-            {/* ── Step 3: Rewards ── */}
-            {step === 3 && (
-              <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 md:p-8 max-w-2xl mx-auto space-y-5">
-                <StepHeader icon={Gift} title="Rewards & Prizes" sub="Define what rewards players can win." />
-                <div className="space-y-4">
-                  {prizes.map((prize, i) => (
-                    <div key={i} className="bg-neutral-50 rounded-2xl border border-neutral-200 p-5 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-neutral-500 uppercase tracking-wide">Prize Option {i + 1}</span>
-                        {prizes.length > 1 && (
-                          <button
-                            onClick={() => removePrize(i)}
-                            className="text-red-400 hover:text-red-600 transition-colors cursor-pointer"
-                          >
-                            <Trash2 className="size-4" />
-                          </button>
-                        )}
+            {/* STEP: Basic Info */}
+            {currentStepKey === "basic" && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                {/* Column 1: Form (lg:col-span-5) */}
+                <div className="lg:col-span-5 bg-white rounded-3xl border border-neutral-200 shadow-sm p-6 space-y-5">
+                  <div className="flex items-start gap-3">
+                    <div className="flex items-center justify-center size-10 rounded-2xl bg-[#F0FDF4] border border-[#DCFCE7] shrink-0">
+                      <FileText className="size-5 text-[#16A34A]" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-black text-neutral-900 tracking-tight">Basic Information</h2>
+                      <p className="text-xs text-neutral-500 mt-0.5">Enter the basic details of your campaign.</p>
+                    </div>
+                  </div>
+
+                  <ValidatedTextInput
+                    label="Campaign Name"
+                    required
+                    value={name}
+                    onChange={(v) => setName(v.slice(0, 60))}
+                    placeholder="e.g. Onam Mega Scratch & Win"
+                    maxLength={60}
+                    valid={name.trim().length > 3}
+                  />
+
+                  <ValidatedTextarea
+                    label="Short Description"
+                    required
+                    value={description}
+                    onChange={(v) => setDescription(v.slice(0, 120))}
+                    placeholder="Describe the campaign briefly..."
+                    maxLength={120}
+                    rows={3}
+                    valid={description.trim().length > 10}
+                  />
+
+                  {/* Campaign URL */}
+                  <div className="space-y-3 rounded-2xl border border-[#BFDBFE] bg-gradient-to-br from-[#EFF6FF] to-white p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-center size-8 rounded-xl bg-white border border-[#BFDBFE] shadow-sm">
+                          <Link2 className="size-4 text-[#2563EB]" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-black text-neutral-900">Campaign URL</p>
+                          <p className="text-[10px] text-neutral-500">Auto-generated from name — switch to custom to edit.</p>
+                        </div>
                       </div>
-                      <Field label="Prize Name *">
+                      <ModeToggle
+                        mode={slugTouched ? "manual" : "auto"}
+                        onAuto={() => {
+                          setSlugTouched(false);
+                          setCampaignSlug(slugify(name));
+                        }}
+                        onManual={() => setSlugTouched(true)}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="mb-1.5 block text-xs font-bold text-neutral-700">URL slug *</label>
+                      <div className="flex items-center overflow-hidden rounded-xl border border-[#BFDBFE] bg-white focus-within:border-[#3B82F6] focus-within:ring-2 focus-within:ring-[#DBEAFE]">
+                        <span className="shrink-0 border-r border-[#E5E7EB] bg-neutral-50 px-3 py-2.5 text-[11px] font-bold text-neutral-500">
+                          /c/{merchantSlug}/
+                        </span>
                         <input
                           type="text"
-                          value={prize.name}
-                          onChange={(e) => updatePrize(i, "name", e.target.value)}
-                          placeholder="e.g. 10% OFF Coupon"
-                          className={inputCls}
+                          value={slugTouched ? campaignSlug : slugify(name)}
+                          onChange={(e) => {
+                            setSlugTouched(true);
+                            setCampaignSlug(
+                              e.target.value
+                                .toLowerCase()
+                                .replace(/[^a-z0-9-]/g, "-")
+                                .replace(/-+/g, "-")
+                                .slice(0, 40)
+                            );
+                          }}
+                          readOnly={!slugTouched}
+                          placeholder="onam-mega-scratch-win"
+                          className={`w-full bg-transparent px-3 py-2.5 text-sm font-medium text-neutral-900 placeholder:text-neutral-400 focus:outline-none ${
+                            !slugTouched ? "text-neutral-500 cursor-default" : ""
+                          }`}
+                          aria-label="Campaign URL slug"
                         />
-                      </Field>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <Field label="Prize Type *">
-                          <select
-                            value={prize.prize_type}
-                            onChange={(e) => {
-                              const nextType = e.target.value as PrizeType;
-                              updatePrize(i, "prize_type", nextType);
-                              // Clear value when switching to a type that has none.
-                              if (!PRIZE_TYPES.find((t) => t.id === nextType)?.hasValue) {
-                                updatePrize(i, "prize_value", null as any);
-                              }
-                            }}
-                            className={inputCls}
-                          >
-                            {PRIZE_TYPES.map((t) => (
-                              <option key={t.id} value={t.id}>{t.label}</option>
-                            ))}
-                          </select>
-                        </Field>
-                        {PRIZE_TYPES.find((t) => t.id === prize.prize_type)?.hasValue && (
-                          <Field label={prize.prize_type === "wallet_points" ? "Points" : "Value (₹)"}>
-                            <input
-                              type="number"
-                              min={0}
-                              value={prize.prize_value ?? ""}
-                              onChange={(e) =>
-                                updatePrize(i, "prize_value", e.target.value === "" ? (null as any) : Number(e.target.value))
-                              }
-                              placeholder={prize.prize_type === "wallet_points" ? "e.g. 100" : "e.g. 250"}
-                              className={inputCls}
-                            />
-                          </Field>
+                        {isValidCampaignSlug(resolvedCampaignSlug) && (
+                          <CheckCircle2 className="mr-3 size-4 shrink-0 text-[#16A34A]" />
                         )}
                       </div>
-                      <p className="text-[11px] text-neutral-400 -mt-1">
-                        {PRIZE_TYPES.find((t) => t.id === prize.prize_type)?.hint}
-                      </p>
-                      {selectedType === "coupon_drop" && prize.prize_type === "coupon" && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl bg-emerald-50/60 border border-emerald-100 p-3">
-                          <Field label="Discount Type *">
-                            <select
-                              value={prize.discount_type ?? "percentage"}
-                              onChange={(e) =>
-                                updatePrize(i, "discount_type", e.target.value as "percentage" | "fixed_amount")
-                              }
-                              className={inputCls}
-                            >
-                              <option value="percentage">Percentage (%)</option>
-                              <option value="fixed_amount">Fixed amount</option>
-                            </select>
-                          </Field>
-                          <Field label={prize.discount_type === "fixed_amount" ? "Amount Off *" : "Percent Off * (%)"}>
-                            <input
-                              type="number"
-                              min={0}
-                              value={prize.discount_value ?? ""}
-                              onChange={(e) =>
-                                updatePrize(i, "discount_value", e.target.value === "" ? (null as any) : Number(e.target.value))
-                              }
-                              placeholder={prize.discount_type === "fixed_amount" ? "e.g. 100" : "e.g. 10"}
-                              className={inputCls}
-                            />
-                          </Field>
-                          <p className="sm:col-span-2 text-[11px] leading-snug text-emerald-700/80">
-                            This tier mints its own Shopify discount at this rate — a winner of this prize gets a real code for exactly this discount.
-                          </p>
-                        </div>
+                      {!isValidCampaignSlug(resolvedCampaignSlug) && (
+                        <p className="mt-1.5 text-[10px] font-bold text-red-600">
+                          Use 2–40 lowercase letters, numbers, or hyphens.
+                        </p>
                       )}
-                      <div className="grid grid-cols-3 gap-3">
-                        <Field label="Quantity">
-                          <input type="number" min={1} value={prize.total_quantity}
-                            onChange={(e) => updatePrize(i, "total_quantity", Number(e.target.value))}
-                            className={inputCls}
-                          />
-                        </Field>
-                        <Field label="Win Chance (Weight)">
-                          <input type="number" min={0} value={prize.weight}
-                            onChange={(e) => updatePrize(i, "weight", Number(e.target.value))}
-                            className={inputCls}
-                          />
-                        </Field>
-                        <Field label="Expiry Days">
-                          <input type="number" min={1} value={prize.expiry_days}
-                            onChange={(e) => updatePrize(i, "expiry_days", Number(e.target.value))}
-                            className={inputCls}
-                          />
-                        </Field>
-                      </div>
-                      <label className="flex items-start gap-2.5 pt-1 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={prize.is_fallback}
-                          onChange={(e) => setFallback(i, e.target.checked)}
-                          className="mt-0.5 size-4 rounded border-neutral-300 text-[#16A34A] focus:ring-[#16A34A]/20 cursor-pointer"
-                        />
-                        <span className="text-[11px] leading-snug">
-                          <span className="font-bold text-neutral-700">Use as fallback prize</span>
-                          <span className="block text-neutral-400">
-                            Awarded automatically when other prizes run out of stock. Only one prize per campaign can be the fallback.
+                    </div>
+
+                    <UrlPreviewRow label="Share link" url={playUrl} variant="blue" />
+                  </div>
+
+                  {/* Tracking source URL */}
+                  <div
+                    className={`rounded-2xl border p-4 transition-colors ${
+                      addSourceUrl ? "border-[#E9D5FF] bg-gradient-to-br from-[#FAF5FF] to-white" : "border-neutral-200 bg-neutral-50/50"
+                    }`}
+                  >
+                    <label className="flex items-start gap-3 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={addSourceUrl}
+                        onChange={(e) => {
+                          setAddSourceUrl(e.target.checked);
+                          if (e.target.checked && !sourceLabel.trim()) {
+                            setSourceLabel(`${name.trim() || "Campaign"} Link`);
+                          }
+                        }}
+                        className="mt-0.5 size-4 rounded border-neutral-300 text-[#7C3AED] focus:ring-[#7C3AED]/20"
+                      />
+                      <span className="flex-1">
+                        <span className="flex items-center gap-2">
+                          <span className="text-xs font-black text-neutral-900">Tracking source URL</span>
+                          <span className="rounded-full bg-neutral-200 px-2 py-0.5 text-[9px] font-black uppercase tracking-wider text-neutral-600">
+                            Optional
                           </span>
                         </span>
-                      </label>
+                        <span className="block text-[10px] text-neutral-500 mt-0.5">
+                          Track where scans come from with a <span className="font-mono">?src=</span> parameter.
+                        </span>
+                      </span>
+                    </label>
+
+                    {addSourceUrl && (
+                      <div className="mt-4 space-y-3 border-t border-[#E9D5FF]/60 pt-4">
+                        <ValidatedTextInput
+                          label="Source name"
+                          required
+                          value={sourceLabel}
+                          onChange={(v) => setSourceLabel(v.slice(0, 60))}
+                          placeholder="e.g. Instagram Story"
+                          maxLength={60}
+                          valid={sourceLabel.trim().length > 0}
+                        />
+
+                        <div>
+                          <div className="mb-1.5 flex items-center justify-between gap-2">
+                            <label className="text-xs font-bold text-neutral-700">Source slug *</label>
+                            <ModeToggle
+                              mode={sourceSlugTouched ? "manual" : "auto"}
+                              onAuto={() => {
+                                setSourceSlugTouched(false);
+                                setSourceSlug(sourceSlugify(sourceLabel || name || "direct"));
+                              }}
+                              onManual={() => setSourceSlugTouched(true)}
+                            />
+                          </div>
+                          <div className="flex items-center overflow-hidden rounded-xl border border-[#E9D5FF] bg-white focus-within:border-[#A855F7] focus-within:ring-2 focus-within:ring-[#F3E8FF]">
+                            <span className="shrink-0 border-r border-[#F3E8FF] bg-[#FAF5FF] px-3 py-2.5 text-[11px] font-bold text-[#7C3AED]">
+                              ?src=
+                            </span>
+                            <input
+                              type="text"
+                              value={
+                                sourceSlugTouched
+                                  ? sourceSlug
+                                  : sourceSlugify(sourceLabel || name || "direct")
+                              }
+                              onChange={(e) => {
+                                setSourceSlugTouched(true);
+                                setSourceSlug(sourceSlugify(e.target.value));
+                              }}
+                              readOnly={!sourceSlugTouched}
+                              placeholder="instagram-story"
+                              className={`w-full bg-transparent px-3 py-2.5 text-sm font-medium text-neutral-900 placeholder:text-neutral-400 focus:outline-none ${
+                                !sourceSlugTouched ? "text-neutral-500 cursor-default" : ""
+                              }`}
+                            />
+                            {isValidSourceSlug(resolvedSourceSlug) && (
+                              <CheckCircle2 className="mr-3 size-4 shrink-0 text-[#16A34A]" />
+                            )}
+                          </div>
+                          {!isValidSourceSlug(resolvedSourceSlug) && (
+                            <p className="mt-1.5 text-[10px] font-bold text-red-600">
+                              Use letters, numbers, hyphens, or underscores.
+                            </p>
+                          )}
+                        </div>
+
+                        {trackedSourceUrl && (
+                          <UrlPreviewRow label="Tracked link" url={trackedSourceUrl} variant="purple" />
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <ImageUploadField
+                    label="Campaign Banner"
+                    required
+                    imageUrl={bannerUrl}
+                    ogImageUrl={ogImageUrl}
+                    processing={bannerProcessing}
+                    compressionNote={
+                      bannerMeta
+                        ? `Compressed ${formatBytes(bannerMeta.originalBytes)} → ${formatBytes(bannerMeta.bannerBytes)} · OG thumbnail ready`
+                        : undefined
+                    }
+                    onUpload={handleBannerUpload}
+                    onRemove={clearBanner}
+                    aspect="banner"
+                    hints={[
+                      "Recommended: 1200 × 600px",
+                      "JPG, PNG, or WEBP — auto-compressed on upload",
+                      "OG link thumbnail (1200 × 630) generated automatically",
+                    ]}
+                  />
+
+                  <ImageUploadField
+                    label="Campaign Logo"
+                    imageUrl={logoUrl}
+                    processing={logoProcessing}
+                    onUpload={handleLogoUpload}
+                    onRemove={() => setLogoUrl("")}
+                    aspect="logo"
+                    hints={["Square format", "Auto-compressed to 512 × 512px"]}
+                  />
+                </div>
+
+                {/* Column 2: Live Mobile Preview (lg:col-span-4) */}
+                <div className="lg:col-span-4 flex flex-col gap-6">
+                  <div>
+                    <h2 className="text-lg font-black text-neutral-900 tracking-tight">Live Preview</h2>
+                    <p className="text-xs text-neutral-500 mt-0.5">This is how your campaign will appear to customers.</p>
+                  </div>
+
+                  {/* iPhone Mockup Frame */}
+                  <div className="relative mx-auto w-full max-w-[280px] aspect-[9/18.5] bg-black rounded-[38px] p-2.5 shadow-2xl ring-1 ring-neutral-900/10">
+                    {/* Speaker notch */}
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 w-28 h-4.5 bg-black rounded-full z-20 flex items-center justify-center">
+                      <div className="w-10 h-1 bg-neutral-800 rounded-full" />
                     </div>
-                  ))}
-                  {prizes.length < 8 && (
-                    <button onClick={addPrize} className="inline-flex items-center gap-1.5 text-xs font-bold text-[#16A34A] hover:text-[#15803D]">
-                      <Plus className="size-3.5" />
-                      Add another prize
-                    </button>
-                  )}
+
+                    {/* Preview Screen */}
+                    <div className="w-full h-full bg-[#F8FAFC] rounded-[30px] overflow-hidden flex flex-col relative select-none">
+                      {/* Status bar spacer */}
+                      <div className="h-6 bg-transparent" />
+
+                      {/* Mock Banner */}
+                      <div className="h-28 bg-neutral-900 relative overflow-hidden shrink-0">
+                        {bannerUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={bannerUrl} alt="Preview Banner" className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-neutral-800 to-neutral-900">
+                            <span className="text-[10px] text-white/20 font-bold uppercase tracking-wider">No Banner Image</span>
+                          </div>
+                        )}
+                        {/* Logo overlay on banner */}
+                        {logoUrl && (
+                          <div className="absolute bottom-2 left-3 size-8 rounded-lg overflow-hidden border border-white bg-white shadow-sm">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={logoUrl} alt="Preview Logo" className="w-full h-full object-cover" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Content */}
+                      <div className="p-3 flex-1 flex flex-col gap-2.5 overflow-y-auto">
+                        <div>
+                          <h3 className="text-xs font-black text-neutral-900 leading-tight">
+                            {name || "Campaign Name"}
+                          </h3>
+                          <p className="text-[10px] text-neutral-500 mt-0.5 leading-normal">
+                            {description || "Campaign short description goes here..."}
+                          </p>
+                        </div>
+
+                        {/* List items */}
+                        <div className="space-y-1.5">
+                          <PreviewInfoRow emoji="🎫" label="Game Type" val={selectedCampaignOption.title} />
+                          <PreviewInfoRow emoji="📅" label="Duration" val={`${formatShortDate(startsAt)} – ${formatShortDate(endsAt)}`} />
+                          <PreviewInfoRow emoji="🎁" label="Rewards" val="Exciting Coupons & Prizes" />
+                          <PreviewInfoRow emoji="✨" label="Tagline" val="Every Scratch is a Winner!" />
+                        </div>
+
+                        {/* Action Button */}
+                        <button className="mt-auto w-full bg-[#16A34A] text-white text-[11px] font-black py-2 rounded-xl text-center shadow-md shadow-green-500/20 cursor-default">
+                          Play Now
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Rotating tip banner */}
+                  <div className="bg-[#DCFCE7]/20 border border-[#16A34A]/10 rounded-2xl p-4 flex gap-3 items-start select-none">
+                    <span className="text-base shrink-0">💡</span>
+                    <div className="text-left">
+                      <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Pro Tip</p>
+                      <p className="text-xs text-neutral-700 font-semibold mt-0.5 leading-relaxed">
+                        {SMART_TIPS[tipIndex]}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Column 3: Campaign Summary (lg:col-span-3) */}
+                <div className="lg:col-span-3 space-y-6">
+                  <div>
+                    <h2 className="text-lg font-black text-neutral-900 tracking-tight">Campaign Summary</h2>
+                    <p className="text-xs text-neutral-500 mt-0.5">Review your campaign details.</p>
+                  </div>
+
+                  {/* Summary Card */}
+                  <div className="bg-white rounded-3xl border border-neutral-200 shadow-sm p-5 space-y-4">
+                    <SummaryRow icon={<Megaphone className="size-4 text-neutral-500" />} label="Campaign Name" val={name || "To be added"} />
+                    <SummaryRow icon={<FileText className="size-4 text-[#16A34A]" />} label="Campaign Type" badge={selectedCampaignOption.title} />
+                    <SummaryRow icon={<Link2 className="size-4 text-[#2563EB]" />} label="Campaign URL" val={resolvedCampaignSlug} />
+                    {trackedSourceUrl && (
+                      <SummaryRow icon={<Radio className="size-4 text-[#7C3AED]" />} label="Source URL" val={resolvedSourceSlug} />
+                    )}
+                    <SummaryRow icon={<CalendarDays className="size-4 text-neutral-500" />} label="Duration" val={`${formatShortDate(startsAt)} – ${formatShortDate(endsAt)}`} />
+                    <SummaryRow icon={<Gift className="size-4 text-neutral-500" />} label="Rewards" val="To be added" />
+                    <SummaryRow icon={<Tag className="size-4 text-neutral-500" />} label="Coupons" val="To be added" />
+                    <SummaryRow icon={<ShieldCheck className="size-4 text-neutral-500" />} label="Status" badge="Draft" />
+
+                    <div className="pt-4 border-t border-neutral-100 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-neutral-700">
+                        <span>Campaign Completion Score</span>
+                        <span>{score}%</span>
+                      </div>
+                      <div className="h-2 bg-neutral-100 rounded-full overflow-hidden">
+                        <div className="h-full bg-[#16A34A] rounded-full transition-all duration-500" style={{ width: `${score}%` }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Reach / Improvement checklist */}
+                  <div className="bg-white rounded-3xl border border-neutral-200 shadow-sm p-5 space-y-4">
+                    <div>
+                      <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Estimated Reach</p>
+                      <p className="text-lg font-black text-neutral-950 mt-1">350–500 Customers</p>
+                      <p className="text-[10px] text-neutral-400 leading-normal mt-0.5">Based on campaign optimization checklist criteria.</p>
+                    </div>
+
+                    <div className="h-px bg-neutral-100" />
+
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest">Recommended checklist</p>
+                      <div className="space-y-2">
+                        <CheckItem checked={name.trim().length > 3} text="Optimal campaign name" />
+                        <CheckItem checked={description.trim().length > 10} text="Add a stronger description" />
+                        <CheckItem checked={isValidCampaignSlug(resolvedCampaignSlug)} text="Campaign URL configured" />
+                        <CheckItem checked={!!bannerUrl} text="Upload a high-quality banner" />
+                        <CheckItem checked={prizes.length > 0} text="Add campaign rewards" />
+                        <CheckItem checked={startsAt !== endsAt} text="Duration period configured" />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* ── Step 4: Coupons ── */}
-            {step === 4 && (
+            {/* STEP: Rewards (standard campaigns only) */}
+            {currentStepKey === "rewards" && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                {/* Column 1: Prize configuration */}
+                <div className="lg:col-span-8 space-y-6">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex size-9 items-center justify-center rounded-xl bg-emerald-50">
+                          <Gift className="size-4.5 text-emerald-600" />
+                        </div>
+                        <h2 className="text-lg font-black text-neutral-900 tracking-tight">Rewards & Prizes</h2>
+                        <span className="rounded-full bg-[#7C3AED]/10 px-2.5 py-0.5 text-[10px] font-bold text-[#7C3AED]">
+                          {prizes.length} Prize{prizes.length === 1 ? "" : "s"} Added
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-xs text-neutral-500 ml-12">
+                        Define what rewards players can win.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Quick-add type selector */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setQuickAddType("coupon")}
+                      className={`flex items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all ${
+                        quickAddType === "coupon"
+                          ? "border-[#7C3AED] bg-[#7C3AED]/5 shadow-sm"
+                          : "border-neutral-200 bg-white hover:border-neutral-300"
+                      }`}
+                    >
+                      <div
+                        className={`flex size-10 items-center justify-center rounded-xl ${
+                          quickAddType === "coupon" ? "bg-[#7C3AED]/15" : "bg-neutral-100"
+                        }`}
+                      >
+                        <Ticket
+                          className={`size-5 ${quickAddType === "coupon" ? "text-[#7C3AED]" : "text-neutral-500"}`}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-neutral-900">Coupon / Discount</p>
+                        <p className="text-[10px] text-neutral-500">Codes redeemed in-store or online</p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQuickAddType("physical_gift")}
+                      className={`flex items-center gap-3 rounded-2xl border-2 p-4 text-left transition-all ${
+                        quickAddType === "physical_gift"
+                          ? "border-[#16A34A] bg-[#16A34A]/5 shadow-sm"
+                          : "border-neutral-200 bg-white hover:border-neutral-300"
+                      }`}
+                    >
+                      <div
+                        className={`flex size-10 items-center justify-center rounded-xl ${
+                          quickAddType === "physical_gift" ? "bg-[#16A34A]/15" : "bg-neutral-100"
+                        }`}
+                      >
+                        <Package
+                          className={`size-5 ${quickAddType === "physical_gift" ? "text-[#16A34A]" : "text-neutral-500"}`}
+                        />
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold text-neutral-900">Physical Gift</p>
+                        <p className="text-[10px] text-neutral-500">Collected at counter or shipped</p>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {prizes.map((prize, i) => (
+                      <div
+                        key={i}
+                        className="rounded-2xl border border-neutral-200 bg-white p-5 shadow-sm space-y-4"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                            Prize Option {i + 1}
+                          </span>
+                          {prizes.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => removePrize(i)}
+                              className="rounded-lg p-1.5 text-red-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                              aria-label={`Remove prize ${i + 1}`}
+                            >
+                              <Trash2 className="size-4" />
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
+                          <div className="space-y-4 lg:col-span-3">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                              <Field label="Prize Type *">
+                                <select
+                                  value={prize.prize_type}
+                                  onChange={(e) => {
+                                    const nextType = e.target.value as PrizeType;
+                                    updatePrize(i, "prize_type", nextType);
+                                    if (!PRIZE_TYPES.find((t) => t.id === nextType)?.hasValue) {
+                                      updatePrize(i, "prize_value", null as any);
+                                    }
+                                  }}
+                                  className={inputCls}
+                                >
+                                  {PRIZE_TYPES.map((t) => (
+                                    <option key={t.id} value={t.id}>
+                                      {t.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </Field>
+                              <Field label="Prize Name *">
+                                <div className="relative">
+                                  <input
+                                    type="text"
+                                    value={prize.name}
+                                    onChange={(e) => updatePrize(i, "name", e.target.value.slice(0, 60))}
+                                    placeholder="e.g. 10% OFF Coupon"
+                                    className={`${inputCls} pr-12`}
+                                    maxLength={60}
+                                  />
+                                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-neutral-400">
+                                    {prize.name.length}/60
+                                  </span>
+                                </div>
+                              </Field>
+                            </div>
+
+                            {PRIZE_TYPES.find((t) => t.id === prize.prize_type)?.hasValue && (
+                              <Field label={prize.prize_type === "wallet_points" ? "Points" : "Value (₹)"}>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={prize.prize_value ?? ""}
+                                  onChange={(e) =>
+                                    updatePrize(
+                                      i,
+                                      "prize_value",
+                                      e.target.value === "" ? (null as any) : Number(e.target.value)
+                                    )
+                                  }
+                                  placeholder={prize.prize_type === "wallet_points" ? "e.g. 100" : "e.g. 250"}
+                                  className={inputCls}
+                                />
+                              </Field>
+                            )}
+
+                            <p className="text-[11px] text-neutral-400 -mt-1">
+                              {PRIZE_TYPES.find((t) => t.id === prize.prize_type)?.hint}
+                            </p>
+
+                            {selectedType === "coupon_drop" && prize.prize_type === "coupon" && (
+                              <div className="grid grid-cols-1 gap-3 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 sm:grid-cols-2">
+                                <Field label="Discount Type *">
+                                  <select
+                                    value={prize.discount_type ?? "percentage"}
+                                    onChange={(e) =>
+                                      updatePrize(i, "discount_type", e.target.value as "percentage" | "fixed_amount")
+                                    }
+                                    className={inputCls}
+                                  >
+                                    <option value="percentage">Percentage (%)</option>
+                                    <option value="fixed_amount">Fixed amount</option>
+                                  </select>
+                                </Field>
+                                <Field
+                                  label={prize.discount_type === "fixed_amount" ? "Amount Off *" : "Percent Off * (%)"}
+                                >
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    value={prize.discount_value ?? ""}
+                                    onChange={(e) =>
+                                      updatePrize(
+                                        i,
+                                        "discount_value",
+                                        e.target.value === "" ? (null as any) : Number(e.target.value)
+                                      )
+                                    }
+                                    placeholder={prize.discount_type === "fixed_amount" ? "e.g. 100" : "e.g. 10"}
+                                    className={inputCls}
+                                  />
+                                </Field>
+                              </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                              <Field label="Quantity">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={prize.total_quantity}
+                                  onChange={(e) => updatePrize(i, "total_quantity", Number(e.target.value))}
+                                  className={inputCls}
+                                />
+                              </Field>
+                              <Field label="Win Chance (Weight)">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  value={prize.weight}
+                                  onChange={(e) => updatePrize(i, "weight", Number(e.target.value))}
+                                  className={inputCls}
+                                />
+                              </Field>
+                              <Field label="Expiry Days">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={prize.expiry_days}
+                                  onChange={(e) => updatePrize(i, "expiry_days", Number(e.target.value))}
+                                  className={inputCls}
+                                />
+                              </Field>
+                            </div>
+
+                            <label className="flex cursor-pointer select-none items-start gap-2.5 rounded-xl border border-neutral-100 bg-neutral-50/80 p-3">
+                              <input
+                                type="checkbox"
+                                checked={prize.is_fallback}
+                                onChange={(e) => setFallback(i, e.target.checked)}
+                                className="mt-0.5 size-4 cursor-pointer rounded border-neutral-300 text-[#16A34A] focus:ring-[#16A34A]/20"
+                              />
+                              <span className="text-[11px] leading-snug">
+                                <span className="font-bold text-neutral-700">Use as fallback prize</span>
+                                <span className="mt-0.5 block text-neutral-400">
+                                  Awarded when other prizes run out of stock. Only one per campaign.
+                                </span>
+                              </span>
+                            </label>
+                          </div>
+
+                          <div className="lg:col-span-2">
+                            <PrizePreviewCard prize={prize} couponPrefix={couponPrefix} />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    {prizes.length < 8 && (
+                      <button
+                        type="button"
+                        onClick={addPrize}
+                        className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-neutral-200 py-4 text-sm font-bold text-neutral-600 transition-colors hover:border-[#7C3AED]/40 hover:bg-[#7C3AED]/5 hover:text-[#7C3AED]"
+                      >
+                        <Plus className="size-4" />
+                        Add Another Prize
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Column 2: Summary sidebar */}
+                <div className="lg:col-span-4 space-y-6">
+                  <div className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm space-y-4">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                      Campaign Summary
+                    </p>
+                    <SummaryRow icon={<Megaphone className="size-4 text-neutral-500" />} label="Campaign Name" val={name || "—"} />
+                    <SummaryRow
+                      icon={<FileText className="size-4 text-[#16A34A]" />}
+                      label="Campaign Type"
+                      badge={selectedCampaignOption.title}
+                    />
+                    <SummaryRow
+                      icon={<CalendarDays className="size-4 text-neutral-500" />}
+                      label="Duration"
+                      val={`${formatShortDate(startsAt)} – ${formatShortDate(endsAt)}`}
+                    />
+                    <SummaryRow
+                      icon={<Gift className="size-4 text-neutral-500" />}
+                      label="Prize Options"
+                      val={`${prizes.length} Prize${prizes.length === 1 ? "" : "s"}`}
+                    />
+                    <SummaryRow
+                      icon={<Tag className="size-4 text-neutral-500" />}
+                      label="Total Quantity"
+                      val={`${prizes.reduce((sum, p) => sum + (p.total_quantity || 0), 0)} Prizes`}
+                    />
+                    <SummaryRow icon={<ShieldCheck className="size-4 text-neutral-500" />} label="Status" badge="Draft" />
+                  </div>
+
+                  <WinProbabilityChart prizes={prizes} />
+
+                  <div className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm space-y-3">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                      Best Practices
+                    </p>
+                    <CheckItem
+                      checked={prizes.some((p) => p.prize_type === "coupon") && prizes.some((p) => p.prize_type !== "coupon")}
+                      text="Offer a mix of coupons and gifts"
+                    />
+                    <CheckItem
+                      checked={prizes.every((p) => p.name.trim().length >= 2)}
+                      text="Name every prize clearly for customers"
+                    />
+                    <CheckItem
+                      checked={prizes.some((p) => p.is_fallback)}
+                      text="Set a fallback prize for stock-outs"
+                    />
+                    <CheckItem
+                      checked={prizes.reduce((s, p) => s + p.weight, 0) > 0}
+                      text="Set win chances fair and exciting"
+                    />
+                    <CheckItem
+                      checked={prizes.reduce((s, p) => s + p.total_quantity, 0) >= 50}
+                      text="Set quantities realistic for store traffic"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* STEP: Coupon Drop Settings */}
+            {currentStepKey === "settings" && (
+              <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 md:p-8 max-w-2xl mx-auto space-y-6">
+                <StepHeader
+                  icon={Tag}
+                  title="Coupon Drop Settings"
+                  sub="Configure discount codes, prefix, and campaign duration."
+                />
+
+                <Field label="Coupon Prefix *">
+                  <input
+                    type="text"
+                    value={couponPrefix}
+                    onChange={(e) =>
+                      setCouponPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))
+                    }
+                    placeholder="e.g. DROP"
+                    className={inputCls}
+                    maxLength={10}
+                  />
+                </Field>
+                <div className="bg-neutral-900 rounded-2xl p-6 text-center">
+                  <p className="text-xs text-white/40 mb-2 font-bold uppercase tracking-wider">Sample Code Output</p>
+                  <p className="text-3xl font-black text-white tracking-widest">{couponPrefix || "WIN"}-A8B9</p>
+                </div>
+
+                <div className="space-y-5 border-t border-neutral-200 pt-6">
+                  <Field label="Win Mode">
+                    <select
+                      value={couponRules.win_mode}
+                      onChange={(e) =>
+                        setCouponRules({ ...couponRules, win_mode: e.target.value as CouponRules["win_mode"] })
+                      }
+                      className={inputCls}
+                    >
+                      <option value="weighted">Weighted draw (win / lose by odds)</option>
+                      <option value="always">Everyone wins a code</option>
+                    </select>
+                  </Field>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Discount Type *">
+                      <select
+                        value={couponRules.discount_type}
+                        onChange={(e) =>
+                          setCouponRules({
+                            ...couponRules,
+                            discount_type: e.target.value as CouponRules["discount_type"],
+                          })
+                        }
+                        className={inputCls}
+                      >
+                        <option value="percentage">Percentage off</option>
+                        <option value="fixed_amount">Fixed amount off</option>
+                      </select>
+                    </Field>
+                    <Field
+                      label={couponRules.discount_type === "percentage" ? "Percent Off * (%)" : "Amount Off *"}
+                    >
+                      <input
+                        type="number"
+                        min={1}
+                        value={couponRules.discount_value}
+                        onChange={(e) =>
+                          setCouponRules({ ...couponRules, discount_value: Number(e.target.value) })
+                        }
+                        className={inputCls}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Minimum Order (optional)">
+                      <input
+                        type="number"
+                        min={0}
+                        value={couponRules.minimum_subtotal ?? ""}
+                        onChange={(e) =>
+                          setCouponRules({
+                            ...couponRules,
+                            minimum_subtotal: e.target.value === "" ? null : Number(e.target.value),
+                          })
+                        }
+                        placeholder="No minimum"
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Uses Per Code (optional)">
+                      <input
+                        type="number"
+                        min={1}
+                        value={couponRules.usage_limit ?? ""}
+                        onChange={(e) =>
+                          setCouponRules({
+                            ...couponRules,
+                            usage_limit: e.target.value === "" ? null : Number(e.target.value),
+                          })
+                        }
+                        placeholder="Unlimited"
+                        className={inputCls}
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Code Expiry (days)">
+                      <input
+                        type="number"
+                        min={1}
+                        value={couponRules.expiry_days ?? ""}
+                        onChange={(e) =>
+                          setCouponRules({
+                            ...couponRules,
+                            expiry_days: e.target.value === "" ? null : Number(e.target.value),
+                          })
+                        }
+                        placeholder="30"
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="Currency">
+                      <input
+                        type="text"
+                        value={couponRules.currency}
+                        onChange={(e) =>
+                          setCouponRules({
+                            ...couponRules,
+                            currency: e.target.value.toUpperCase().slice(0, 3),
+                          })
+                        }
+                        className={inputCls}
+                        maxLength={3}
+                      />
+                    </Field>
+                  </div>
+
+                  <label className="flex items-center gap-3 text-sm font-semibold text-neutral-700">
+                    <input
+                      type="checkbox"
+                      checked={couponRules.applies_once_per_customer}
+                      onChange={(e) =>
+                        setCouponRules({ ...couponRules, applies_once_per_customer: e.target.checked })
+                      }
+                      className="size-4 rounded border-neutral-300"
+                    />
+                    Limit to one use per customer
+                  </label>
+                </div>
+
+                <div className="space-y-5 border-t border-neutral-200 pt-6">
+                  <StepHeader icon={CalendarDays} title="Campaign Duration" sub="When customers can claim coupons." />
+                  <div className="grid grid-cols-2 gap-4">
+                    <Field label="Start Date *">
+                      <input
+                        type="date"
+                        value={startsAt}
+                        min={todayISO()}
+                        onChange={(e) => setStartsAt(e.target.value)}
+                        className={inputCls}
+                      />
+                    </Field>
+                    <Field label="End Date *">
+                      <input
+                        type="date"
+                        value={endsAt}
+                        min={startsAt}
+                        onChange={(e) => setEndsAt(e.target.value)}
+                        className={inputCls}
+                      />
+                    </Field>
+                  </div>
+                </div>
+
+                <p className="text-xs text-neutral-500">
+                  Codes are minted in Shopify when you publish. Requires the
+                  <span className="font-semibold"> write_discounts</span> permission on your connected store.
+                </p>
+              </div>
+            )}
+
+            {/* STEP: Coupons (standard campaigns only) */}
+            {currentStepKey === "coupons" && (
               <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 md:p-8 max-w-2xl mx-auto space-y-5">
                 <StepHeader icon={Tag} title="Coupon Settings" sub="Customize coupon prefixes." />
                 <Field label="Coupon Prefix *">
@@ -1037,172 +1731,11 @@ export function CampaignWizard() {
                   <p className="text-xs text-white/40 mb-2 font-bold uppercase tracking-wider">Sample Code Output</p>
                   <p className="text-3xl font-black text-white tracking-widest">{couponPrefix || "WIN"}-A8B9</p>
                 </div>
-
-                {selectedType === "coupon_drop" && (
-                  <div className="space-y-5 border-t border-neutral-200 pt-6">
-                    <StepHeader
-                      icon={Tag}
-                      title="Shopify Discount Rules"
-                      sub="Each winner gets a unique Shopify discount code with these rules."
-                    />
-
-                    <Field label="Win Mode">
-                      <select
-                        value={couponRules.win_mode}
-                        onChange={(e) =>
-                          setCouponRules({ ...couponRules, win_mode: e.target.value as CouponRules["win_mode"] })
-                        }
-                        className={inputCls}
-                      >
-                        <option value="weighted">Weighted draw (win / lose by prize odds)</option>
-                        <option value="always">Everyone wins a code</option>
-                      </select>
-                    </Field>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <Field label="Discount Type *">
-                        <select
-                          value={couponRules.discount_type}
-                          onChange={(e) =>
-                            setCouponRules({
-                              ...couponRules,
-                              discount_type: e.target.value as CouponRules["discount_type"],
-                            })
-                          }
-                          className={inputCls}
-                        >
-                          <option value="percentage">Percentage off</option>
-                          <option value="fixed_amount">Fixed amount off</option>
-                        </select>
-                      </Field>
-                      <Field
-                        label={couponRules.discount_type === "percentage" ? "Percent Off * (%)" : "Amount Off *"}
-                      >
-                        <input
-                          type="number"
-                          min={0}
-                          value={couponRules.discount_value}
-                          onChange={(e) =>
-                            setCouponRules({ ...couponRules, discount_value: Number(e.target.value) })
-                          }
-                          className={inputCls}
-                        />
-                      </Field>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <Field label="Minimum Order (optional)">
-                        <input
-                          type="number"
-                          min={0}
-                          value={couponRules.minimum_subtotal ?? ""}
-                          onChange={(e) =>
-                            setCouponRules({
-                              ...couponRules,
-                              minimum_subtotal: e.target.value === "" ? null : Number(e.target.value),
-                            })
-                          }
-                          placeholder="No minimum"
-                          className={inputCls}
-                        />
-                      </Field>
-                      <Field label="Uses Per Code (optional)">
-                        <input
-                          type="number"
-                          min={1}
-                          value={couponRules.usage_limit ?? ""}
-                          onChange={(e) =>
-                            setCouponRules({
-                              ...couponRules,
-                              usage_limit: e.target.value === "" ? null : Number(e.target.value),
-                            })
-                          }
-                          placeholder="Unlimited"
-                          className={inputCls}
-                        />
-                      </Field>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <Field label="Code Expiry (days)">
-                        <input
-                          type="number"
-                          min={1}
-                          value={couponRules.expiry_days ?? ""}
-                          onChange={(e) =>
-                            setCouponRules({
-                              ...couponRules,
-                              expiry_days: e.target.value === "" ? null : Number(e.target.value),
-                            })
-                          }
-                          placeholder="Follows campaign end"
-                          className={inputCls}
-                        />
-                      </Field>
-                      <Field label="Currency">
-                        <input
-                          type="text"
-                          value={couponRules.currency}
-                          onChange={(e) =>
-                            setCouponRules({
-                              ...couponRules,
-                              currency: e.target.value.toUpperCase().slice(0, 3),
-                            })
-                          }
-                          className={inputCls}
-                          maxLength={3}
-                        />
-                      </Field>
-                    </div>
-
-                    <label className="flex items-center gap-3 text-sm font-semibold text-neutral-700">
-                      <input
-                        type="checkbox"
-                        checked={couponRules.applies_once_per_customer}
-                        onChange={(e) =>
-                          setCouponRules({ ...couponRules, applies_once_per_customer: e.target.checked })
-                        }
-                        className="size-4 rounded border-neutral-300"
-                      />
-                      Limit to one use per customer
-                    </label>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <Field label="Codes to Pre-generate">
-                        <input
-                          type="number"
-                          min={1}
-                          value={couponRules.pool_target}
-                          onChange={(e) =>
-                            setCouponRules({ ...couponRules, pool_target: Number(e.target.value) })
-                          }
-                          className={inputCls}
-                        />
-                      </Field>
-                      <Field label="Auto-refill When Below">
-                        <input
-                          type="number"
-                          min={0}
-                          value={couponRules.pool_low_watermark}
-                          onChange={(e) =>
-                            setCouponRules({ ...couponRules, pool_low_watermark: Number(e.target.value) })
-                          }
-                          className={inputCls}
-                        />
-                      </Field>
-                    </div>
-
-                    <p className="text-xs text-neutral-500">
-                      Codes are minted in Shopify when you activate the campaign. This requires the
-                      <span className="font-semibold"> write_discounts</span> permission on your connected store.
-                    </p>
-                  </div>
-                )}
               </div>
             )}
 
-            {/* ── Step 5: Duration ── */}
-            {step === 5 && (
+            {/* STEP: Duration (standard campaigns only) */}
+            {currentStepKey === "duration" && (
               <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 md:p-8 max-w-2xl mx-auto space-y-5">
                 <StepHeader icon={CalendarDays} title="Duration" sub="Define the start and end dates." />
                 <div className="grid grid-cols-2 gap-4">
@@ -1222,8 +1755,8 @@ export function CampaignWizard() {
               </div>
             )}
 
-            {/* ── Step 6: Review ── */}
-            {step === 6 && (
+            {/* STEP: Preview */}
+            {currentStepKey === "preview" && (
               <div className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-6 md:p-8 max-w-2xl mx-auto space-y-6">
                 <StepHeader icon={Rocket} title="Review & Publish" sub="Please review details before saving." />
                 {serverError && (
@@ -1237,6 +1770,24 @@ export function CampaignWizard() {
                   <ReviewRow label="Headline" value={headline} />
                   <ReviewRow label="Selected Game" value={selectedCampaignOption.title} />
                   <ReviewRow label="Coupon Prefix" value={`${couponPrefix}-XXXX`} />
+                  <ReviewRow label="Campaign URL" value={playUrl} />
+                  {trackedSourceUrl && <ReviewRow label="Source URL" value={trackedSourceUrl} />}
+                  {selectedType === "coupon_drop" && (
+                    <>
+                      <ReviewRow
+                        label="Discount"
+                        value={
+                          couponRules.discount_type === "percentage"
+                            ? `${couponRules.discount_value}% off`
+                            : `${couponRules.currency} ${couponRules.discount_value} off`
+                        }
+                      />
+                      <ReviewRow
+                        label="Win Mode"
+                        value={couponRules.win_mode === "always" ? "Everyone wins" : "Weighted draw"}
+                      />
+                    </>
+                  )}
                   <ReviewRow label="Starts" value={startsAt} />
                   <ReviewRow label="Ends" value={endsAt} />
                 </div>
@@ -1276,7 +1827,7 @@ export function CampaignWizard() {
                 >
                   Save as Draft
                 </button>
-                {step === 6 ? (
+                {isLastStep ? (
                   <button
                     onClick={() => publish(false)}
                     disabled={isPending}
@@ -1294,10 +1845,20 @@ export function CampaignWizard() {
                 ) : (
                   <button
                     onClick={next}
-                    disabled={step === 1 && (!name.trim() || !description.trim() || !bannerUrl)}
+                    disabled={
+                      (currentStepKey === "basic" &&
+                        (!name.trim() ||
+                          !description.trim() ||
+                          !bannerUrl ||
+                          !isValidCampaignSlug(resolvedCampaignSlug) ||
+                          (addSourceUrl &&
+                            (!sourceLabel.trim() || !isValidSourceSlug(resolvedSourceSlug))))) ||
+                      (currentStepKey === "settings" &&
+                        (!couponPrefix.trim() || couponRules.discount_value <= 0 || startsAt >= endsAt))
+                    }
                     className="inline-flex items-center gap-1 bg-[#16A34A] hover:bg-[#15803D] text-white text-xs font-bold px-6 py-2.5 rounded-full transition-colors shadow-lg shadow-green-500/20 cursor-pointer disabled:opacity-50"
                   >
-                    Save & Continue
+                    {continueLabel}
                     <ChevronRight className="size-3.5" />
                   </button>
                 )}
@@ -1484,6 +2045,406 @@ function CheckItem({ checked, text }: { checked: boolean; text: string }) {
       <span className={`font-semibold ${checked ? "text-neutral-500 line-through" : "text-neutral-700"}`}>
         {text}
       </span>
+    </div>
+  );
+}
+
+const PRIZE_CHART_COLORS = ["#7C3AED", "#16A34A", "#2563EB", "#F59E0B", "#EC4899", "#06B6D4", "#8B5CF6", "#84CC16"];
+
+function couponPreviewHeadline(prize: PrizeRow): string {
+  if (prize.discount_value != null && prize.discount_type === "percentage") {
+    return `${prize.discount_value}% OFF`;
+  }
+  if (prize.discount_value != null && prize.discount_type === "fixed_amount") {
+    return `₹${prize.discount_value} OFF`;
+  }
+  const match = prize.name.match(/(\d+)\s*%/i);
+  if (match) return `${match[1]}% OFF`;
+  return prize.name.trim() || "10% OFF";
+}
+
+function WinProbabilityChart({ prizes }: { prizes: PrizeRow[] }) {
+  const totalWeight = prizes.reduce((sum, p) => sum + Math.max(0, p.weight), 0);
+  const segments = prizes.map((prize, i) => {
+    const pct = totalWeight > 0 ? Math.round((Math.max(0, prize.weight) / totalWeight) * 100) : 0;
+    return { prize, pct, color: PRIZE_CHART_COLORS[i % PRIZE_CHART_COLORS.length] };
+  });
+
+  let cursor = 0;
+  const gradientStops = segments
+    .map((seg) => {
+      const start = cursor;
+      cursor += seg.pct;
+      return `${seg.color} ${start}% ${cursor}%`;
+    })
+    .join(", ");
+
+  const gradient =
+    totalWeight > 0 && segments.length > 0
+      ? `conic-gradient(${gradientStops})`
+      : "conic-gradient(#E5E7EB 0% 100%)";
+
+  return (
+    <div className="rounded-3xl border border-neutral-200 bg-white p-5 shadow-sm space-y-4">
+      <p className="text-[10px] font-bold uppercase tracking-widest text-neutral-400">Win Probability Guide</p>
+
+      <div className="flex items-center gap-5">
+        <div className="relative size-28 shrink-0">
+          <div className="size-full rounded-full" style={{ background: gradient }} />
+          <div className="absolute inset-4 flex items-center justify-center rounded-full bg-white text-center shadow-inner">
+            <div>
+              <p className="text-lg font-black text-neutral-900">{totalWeight > 0 ? "100%" : "—"}</p>
+              <p className="text-[9px] font-bold text-neutral-400">TOTAL</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="min-w-0 flex-1 space-y-2">
+          {segments.length === 0 ? (
+            <p className="text-xs text-neutral-400">Add prizes to see probability split.</p>
+          ) : (
+            segments.map((seg, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <span
+                  className="mt-1 size-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: seg.color }}
+                />
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-bold text-neutral-800">
+                    {seg.prize.name.trim() || `Prize ${i + 1}`}{" "}
+                    <span className="font-semibold text-neutral-400">({seg.pct}%)</span>
+                  </p>
+                  <p className="text-[10px] text-neutral-400">Weight: {seg.prize.weight}</p>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PrizePreviewCard({ prize, couponPrefix }: { prize: PrizeRow; couponPrefix: string }) {
+  const isCoupon = prize.prize_type === "coupon";
+  const isPhysical = prize.prize_type === "physical_gift";
+
+  return (
+    <div className="flex h-full flex-col rounded-2xl border border-neutral-100 bg-neutral-50/80 p-4">
+      <p className="mb-3 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+        {isCoupon ? "Coupon Preview" : isPhysical ? "Gift Preview" : "Prize Preview"}
+      </p>
+
+      {isCoupon ? (
+        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#7C3AED]/30 bg-white p-4 text-center">
+          <p className="text-2xl font-black tracking-tight text-[#7C3AED]">{couponPreviewHeadline(prize)}</p>
+          <p className="mt-1 text-xs font-bold text-neutral-700">Discount Coupon</p>
+          <p className="mt-3 rounded-lg bg-neutral-100 px-3 py-1.5 font-mono text-[10px] font-bold tracking-widest text-neutral-500">
+            {couponPrefix || "WIN"}-XXXX
+          </p>
+          <p className="mt-2 text-[10px] text-neutral-400">Auto-generated code</p>
+        </div>
+      ) : isPhysical ? (
+        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-neutral-200 bg-white p-4 text-center">
+          <div className="flex size-16 items-center justify-center rounded-2xl bg-[#16A34A]/10">
+            <Package className="size-8 text-[#16A34A]" />
+          </div>
+          <p className="mt-3 text-sm font-bold text-neutral-800">{prize.name.trim() || "Physical Gift"}</p>
+          <p className="mt-1 text-[10px] text-neutral-400">Collect at counter</p>
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-neutral-200 bg-white p-4 text-center">
+          <div className="flex size-16 items-center justify-center rounded-2xl bg-[#2563EB]/10">
+            <Gift className="size-8 text-[#2563EB]" />
+          </div>
+          <p className="mt-3 text-sm font-bold text-neutral-800">{prize.name.trim() || "Reward"}</p>
+          <p className="mt-1 text-[10px] text-neutral-400">
+            {PRIZE_TYPES.find((t) => t.id === prize.prize_type)?.label}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UrlPreviewRow({
+  label,
+  url,
+  variant = "neutral",
+}: {
+  label: string;
+  url: string;
+  variant?: "neutral" | "blue" | "purple";
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const styles = {
+    neutral: "border-neutral-200 bg-white",
+    blue: "border-[#BFDBFE] bg-white",
+    purple: "border-[#E9D5FF] bg-white",
+  }[variant];
+
+  const iconColor = variant === "purple" ? "text-[#7C3AED]" : variant === "blue" ? "text-[#2563EB]" : "text-neutral-500";
+
+  function copy() {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <div className={`rounded-xl border p-3 ${styles}`}>
+      <div className="flex items-center gap-1.5">
+        <Globe className={`size-3.5 ${iconColor}`} />
+        <p className="text-[10px] font-bold uppercase tracking-wider text-neutral-400">{label}</p>
+      </div>
+      <div className="mt-1.5 flex items-start gap-2">
+        <p className="flex-1 break-all font-mono text-[11px] font-semibold leading-relaxed text-neutral-700">{url}</p>
+        <button
+          type="button"
+          onClick={copy}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-1.5 text-[10px] font-bold text-neutral-600 transition-colors hover:bg-neutral-100"
+        >
+          {copied ? <Check className="size-3 text-[#16A34A]" /> : <Copy className="size-3" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ModeToggle({
+  mode,
+  onAuto,
+  onManual,
+}: {
+  mode: "auto" | "manual";
+  onAuto: () => void;
+  onManual: () => void;
+}) {
+  return (
+    <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 text-[10px] font-bold">
+      <button
+        type="button"
+        onClick={onAuto}
+        className={`rounded-md px-2 py-1 transition-colors ${
+          mode === "auto" ? "bg-[#16A34A] text-white shadow-sm" : "text-neutral-500 hover:text-neutral-700"
+        }`}
+      >
+        Auto
+      </button>
+      <button
+        type="button"
+        onClick={onManual}
+        className={`rounded-md px-2 py-1 transition-colors ${
+          mode === "manual" ? "bg-neutral-900 text-white shadow-sm" : "text-neutral-500 hover:text-neutral-700"
+        }`}
+      >
+        Custom
+      </button>
+    </div>
+  );
+}
+
+function ValidatedTextInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  maxLength,
+  valid,
+  required,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  maxLength?: number;
+  valid?: boolean;
+  required?: boolean;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-bold text-neutral-700">
+        {label}
+        {required && " *"}
+      </label>
+      <div className="relative">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          className={`${inputCls} ${maxLength ? "pr-16" : valid ? "pr-10" : ""}`}
+        />
+        {maxLength && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-neutral-400">
+            {value.length}/{maxLength}
+          </span>
+        )}
+        {valid && !maxLength && (
+          <CheckCircle2 className="absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[#16A34A]" />
+        )}
+        {valid && maxLength && (
+          <CheckCircle2 className="absolute right-12 top-1/2 size-4 -translate-y-1/2 text-[#16A34A]" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ValidatedTextarea({
+  label,
+  value,
+  onChange,
+  placeholder,
+  maxLength,
+  rows,
+  valid,
+  required,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  maxLength?: number;
+  rows?: number;
+  valid?: boolean;
+  required?: boolean;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-bold text-neutral-700">
+        {label}
+        {required && " *"}
+      </label>
+      <div className="relative">
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          rows={rows ?? 3}
+          maxLength={maxLength}
+          className={`${inputCls} resize-none pr-16`}
+        />
+        {maxLength && (
+          <span className="absolute right-3 bottom-2.5 text-[10px] font-bold text-neutral-400">
+            {value.length}/{maxLength}
+          </span>
+        )}
+        {valid && (
+          <CheckCircle2 className="absolute right-3 top-3 size-4 text-[#16A34A]" />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ImageUploadField({
+  label,
+  imageUrl,
+  ogImageUrl,
+  processing,
+  compressionNote,
+  onUpload,
+  onRemove,
+  aspect,
+  hints,
+  required,
+}: {
+  label: string;
+  imageUrl: string;
+  ogImageUrl?: string;
+  processing?: boolean;
+  compressionNote?: string;
+  onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onRemove: () => void;
+  aspect: "banner" | "logo";
+  hints: string[];
+  required?: boolean;
+}) {
+  const isBanner = aspect === "banner";
+
+  return (
+    <div className="space-y-2">
+      <label className="block text-xs font-bold text-neutral-700">
+        {label}
+        {required ? " *" : " (Optional)"}
+      </label>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        {processing ? (
+          <div
+            className={`flex flex-col items-center justify-center rounded-2xl border border-dashed border-neutral-200 bg-neutral-50 ${
+              isBanner ? "h-28 w-full sm:w-44" : "size-20"
+            }`}
+          >
+            <Loader2 className="size-5 animate-spin text-neutral-400" />
+            <span className="mt-1 text-[10px] font-bold text-neutral-500">Compressing…</span>
+          </div>
+        ) : imageUrl ? (
+          <div className="flex flex-col gap-2">
+            <div
+              className={`relative overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-50 ${
+                isBanner ? "h-28 w-full sm:w-44" : "size-20"
+              }`}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={imageUrl} alt={label} className="h-full w-full object-cover" />
+            </div>
+            {isBanner && ogImageUrl && (
+              <div className="flex items-center gap-2">
+                <div className="relative h-10 w-[76px] overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={ogImageUrl} alt="OG thumbnail" className="h-full w-full object-cover" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold text-neutral-600">Link thumbnail</p>
+                  <p className="text-[9px] text-neutral-400">1200 × 630 · WhatsApp, Facebook, X</p>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <label
+            className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-neutral-200 transition-colors hover:border-neutral-300 ${
+              isBanner ? "h-28 w-full sm:w-44" : "size-20"
+            }`}
+          >
+            <Upload className={`text-neutral-400 ${isBanner ? "size-5 mb-1" : "size-4 mb-0.5"}`} />
+            <span className="text-[10px] font-bold text-neutral-700">Upload</span>
+            <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onUpload} className="hidden" />
+          </label>
+        )}
+
+        <div className="flex flex-1 flex-col gap-2">
+          <div className="text-[10px] leading-relaxed text-neutral-400">
+            {hints.map((hint) => (
+              <p key={hint}>{hint}</p>
+            ))}
+          </div>
+          {compressionNote && (
+            <p className="text-[10px] font-semibold text-emerald-600">{compressionNote}</p>
+          )}
+          {imageUrl && !processing && (
+            <div className="flex flex-wrap gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-[10px] font-bold text-neutral-700 transition-colors hover:bg-neutral-50">
+                <Upload className="size-3" />
+                Change image
+                <input type="file" accept="image/jpeg,image/png,image/webp" onChange={onUpload} className="hidden" />
+              </label>
+              <button
+                type="button"
+                onClick={onRemove}
+                className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-[10px] font-bold text-red-600 transition-colors hover:bg-red-100"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

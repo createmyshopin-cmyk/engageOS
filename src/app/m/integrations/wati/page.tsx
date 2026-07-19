@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { getWatiIntegration } from "@/lib/wati/store";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
 import { WatiSettings } from "@/components/merchant/wati/wati-settings";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +27,14 @@ export default async function WatiIntegrationPage() {
   const biz = await repo.getBusiness<{ name: string; city: string | null }>("name, city");
   if (!biz) redirect("/m/login?from=/m/integrations/wati");
 
+  let watiConnected = false;
+  try {
+    const integration = await getWatiIntegration(repo.businessId);
+    watiConnected = !!integration && integration.status === "connected";
+  } catch {
+    /* non-fatal — settings UI will reflect state */
+  }
+
   return (
     <MerchantShell businessName={biz.name} city={biz.city} hideHeader>
       <div className="space-y-6">
@@ -44,13 +53,22 @@ export default async function WatiIntegrationPage() {
             alt="WATI"
             className="h-7 w-auto shrink-0"
           />
-          <div>
+          <div className="min-w-0 flex-1">
             <h1 className="text-lg font-black text-[#111827]">WhatsApp Gateway</h1>
             <p className="text-xs text-[#6B7280] font-medium">
               Connect your official WATI WhatsApp business gateway (API v3) to send
               approved template messages from EngageOS.
             </p>
           </div>
+          {watiConnected && (
+            <Link
+              href="/m/wati"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#3B82F6] px-4 py-2.5 text-xs font-bold text-white shadow-md shadow-blue-500/20 hover:bg-[#2563EB] transition-colors"
+            >
+              Open console
+              <ArrowRight className="size-3.5" />
+            </Link>
+          )}
         </div>
 
         <WatiSettings />

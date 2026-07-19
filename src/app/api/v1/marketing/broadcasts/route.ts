@@ -7,13 +7,9 @@ export const runtime = "nodejs";
 /**
  * Marketing module — /api/v1/marketing/broadcasts
  *
- * Outbound campaigns (WhatsApp via the EXISTING wacrm/WATI integration, plus
- * future email/SMS). This surface is READ-ONLY for now: it lists the broadcast
- * ledger EngageOS already keeps (whatsapp_broadcasts, 0027). Launching /
- * scheduling a send is intentionally NOT implemented here — that flow lives in
- * the existing WhatsApp composer (which reuses the wacrm outbound path and
- * enforces per-customer consent), and POST stays a 501 stub so this phase adds
- * no send automation and duplicates no send logic.
+ * Outbound campaigns (WhatsApp via WATI, plus future email/SMS). This surface is
+ * READ-ONLY for now. The Meta/wacrm broadcast ledger was removed; POST stays a
+ * 501 stub until a WATI-backed feed is added.
  *
  * Tenancy: derived from the authenticated session; every query is keyset-
  * paginated over (created_at, id). business_id is never taken from input.
@@ -30,8 +26,7 @@ export const GET = defineRoute({
 export const POST = defineRoute({
   auth: true,
   handler: async () => {
-    // Consent-enforced send/scheduling is out of scope for this phase; the live
-    // send path remains the WhatsApp composer. See module doc above.
+    // Consent-enforced send/scheduling is out of scope for this phase; use WATI.
     throw new NotImplementedError("marketing.broadcasts send is not implemented yet");
   },
 });

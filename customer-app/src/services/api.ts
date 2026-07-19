@@ -4,6 +4,7 @@ import type {
   PlayApiResponse,
   PlayRequest,
 } from "../types";
+import { getOrCreateDeviceId } from "../lib/device-id";
 
 /**
  * Base URL for the EngageOS Next.js API. Empty string = same origin
@@ -129,6 +130,7 @@ interface QueuedBeacon {
   campaignId: string;
   eventType: ExperienceEventType;
   metadata?: Record<string, unknown>;
+  deviceId?: string;
 }
 
 const QUEUE_KEY = "engageos.beacon_queue";
@@ -181,7 +183,12 @@ export function trackExperience(
   eventType: ExperienceEventType,
   metadata?: Record<string, unknown>,
 ) {
-  const payload: QueuedBeacon = { campaignId, eventType, metadata };
+  const payload: QueuedBeacon = {
+    campaignId,
+    eventType,
+    metadata,
+    deviceId: getOrCreateDeviceId(),
+  };
   if (!navigator.onLine) {
     queueBeacon(payload);
     return;

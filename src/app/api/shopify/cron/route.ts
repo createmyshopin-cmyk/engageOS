@@ -2,7 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { enqueueDueSyncs } from "@/lib/shopify/store";
 import { drainDueJobs } from "@/lib/shopify/sync-engine";
-import { topUpAllCouponDropPools } from "@/lib/shopify/coupon-drop-orchestrator";
+import {
+  reconcilePendingCoupons,
+  topUpAllCouponDropPools,
+} from "@/lib/shopify/coupon-drop-orchestrator";
 import { createLogger, newCorrelationId } from "@/server/observability/logger";
 
 export const runtime = "nodejs";
@@ -72,8 +75,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         err: err instanceof Error ? err.message : String(err),
       });
     }
-    log.info("shopify.cron.tick", { enqueued, processed, interval, maxJobs, poolsSwept });
-    return NextResponse.json({ ok: true, enqueued, processed, poolsSwept });
+    let couponsReconciled = { attempted: 0, linked: 0 };
+    try {
+      couponsReconciled = await reconcilePendingCoupons();
+    } catch (err) {
+      log.error("shopify.cron.coupon_reconcile_failed", {
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    log.info("shopify.cron.tick", {
+      enqueued,
+      processed,
+      interval,
+      maxJobs,
+      poolsSwept,
+      couponsReconciled,
+    });
+    return NextResponse.json({
+      ok: true,
+      enqueued,
+      processed,
+      poolsSwept,
+      couponsReconciled,
+    });
   } catch (err) {
     log.error("shopify.cron.failed", { err: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ ok: false, error: "scheduler error" }, { status: 500 });

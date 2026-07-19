@@ -34,9 +34,18 @@ export function proxy(request: NextRequest): NextResponse {
     }
   }
 
+  // Operator portal: sub-routes under /admin (the /admin root is the login page).
+  if (pathname.startsWith("/admin/")) {
+    if (!hasStructuredCookie(request.cookies.get("admin_session")?.value)) {
+      const loginUrl = new URL("/admin", request.url);
+      loginUrl.searchParams.set("next", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
+  }
+
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/m/:path*"],
+  matcher: ["/m/:path*", "/admin/:path*"],
 };

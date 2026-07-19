@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { authorizeMerchantRead, authorizeMerchantWrite } from "@/lib/merchant-route-auth";
 import { encryptSecret } from "@/lib/wacrm/crypto";
 import { WatiClient, WatiApiError } from "@/lib/wati/client";
 import {
@@ -9,6 +9,8 @@ import {
   patchWatiIntegration,
   upsertWatiIntegration,
 } from "@/lib/wati/store";
+import { deleteWacrmIntegration } from "@/lib/wacrm/store";
+import { assertWhatsAppProviderAvailable } from "@/lib/communication/provider";
 
 export const runtime = "nodejs";
 
@@ -33,10 +35,9 @@ const settingsSchema = z.object({
 
 /** Current WATI integration status for this tenant. */
 export async function GET(req: Request): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await authorizeMerchantRead();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   try {
     const integration = await getWatiIntegration(repo.businessId);
@@ -84,10 +85,9 @@ export async function GET(req: Request): Promise<NextResponse> {
 
 /** Connect: verify the token against WATI, then persist (token encrypted). */
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await authorizeMerchantWrite();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   let body: unknown;
   try {
@@ -105,6 +105,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const { baseUrl, apiToken, displayName } = parsed.data;
   const normalizedBase = baseUrl.replace(/\/+$/, "");
+
+  const availability = await assertWhatsAppProviderAvailable(repo.businessId, "wati");
+  if (!availability.ok) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Another WhatsApp provider is already active for this tenant.",
+      },
+      { status: 409 }
+    );
+  }
 
   // Clean token if pasted with 'Bearer ' prefix
   let cleanToken = apiToken;
@@ -133,6 +144,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    await deleteWacrmIntegration(repo.businessId);
+
     await upsertWatiIntegration(repo.businessId, {
       provider: "wati",
       base_url: normalizedBase,
@@ -167,10 +180,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
 /** Update coupon-delivery settings. */
 export async function PATCH(req: NextRequest): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await authorizeMerchantWrite();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   let body: unknown;
   try {
@@ -218,10 +230,9 @@ export async function PATCH(req: NextRequest): Promise<NextResponse> {
 
 /** Disconnect WATI. */
 export async function DELETE(): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await authorizeMerchantWrite();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   try {
     await deleteWatiIntegration(repo.businessId);

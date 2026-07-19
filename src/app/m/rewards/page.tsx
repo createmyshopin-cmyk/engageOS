@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
-import type { GiftInventoryRow, PrizeType } from "@/lib/types";
+import type { GiftInventoryRow } from "@/lib/types";
+import { PRIZE_TYPE_LABELS } from "@/lib/merchant/prize-labels";
 import { Gift, Package, AlertTriangle, ShieldCheck } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -10,15 +11,6 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Gift Inventory — EngageOS",
   robots: { index: false, follow: false },
-};
-
-const PRIZE_TYPE_LABELS: Record<PrizeType, string> = {
-  coupon: "Coupon",
-  physical_gift: "Physical Gift",
-  gift_voucher: "Gift Voucher",
-  lucky_draw: "Lucky Draw",
-  cashback: "Cashback",
-  wallet_points: "Wallet Points",
 };
 
 function pct(won: number, total: number): number {

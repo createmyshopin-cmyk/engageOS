@@ -75,6 +75,7 @@ export interface Campaign {
   headline: string;
   description: string | null;
   banner_url: string | null;
+  og_image_url: string | null;
   logo_url: string | null;
   terms: string | null;
   coupon_prefix: string;
@@ -223,6 +224,8 @@ export interface CampaignDisplay {
   headline: string;
   business_name: string;
   logo_url: string | null;
+  banner_url: string | null;
+  og_image_url: string | null;
   ends_at: string;
   prizes: CampaignDisplayPrize[];
   redirect?: RedirectSettings;
@@ -260,8 +263,14 @@ export type PlayResult =
       discount_summary?: string;
       /** The merchant's Shopify storefront URL to redeem at. */
       store_url?: string;
+      /** Coupon Drop: scratch funnel event is recorded on client reveal. */
+      defer_scratch_event?: boolean;
+      /** Shopify Admin URL to view the parent discount + codes. */
+      shopify_admin_url?: string;
+      /** Parent discount title in Shopify (where codes live). */
+      shopify_discount_title?: string;
     }
-  | { status: "ok"; won: false }
+  | { status: "ok"; won: false; defer_scratch_event?: boolean }
   | { status: "already_played" }
   | { status: "campaign_inactive" }
   | { status: "campaign_full" }
@@ -313,6 +322,7 @@ export interface CouponDropStats {
 export interface CouponDropOverviewRow {
   campaign_id: string;
   campaign_name: string;
+  campaign_slug: string;
   campaign_status: string;
   pool_status: string;
   pool_last_error: string | null;
@@ -345,14 +355,18 @@ export interface CustomerTimelineEvent {
 
 export interface LiveWinner {
   event_id: string;
+  customer_id: string | null;
   customer_name: string | null;
   customer_phone: string | null;
+  campaign_id: string | null;
   campaign_name: string | null;
+  campaign_type: CampaignType | null;
   prize_name: string | null;
   prize_type: PrizeType | null;
   prize_value: number | null;
   coupon_code: string | null;
   won_at: string;
+  wa_opt_out: boolean;
 }
 
 export interface GiftInventoryRow {

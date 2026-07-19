@@ -5,8 +5,11 @@ import { after } from "next/server";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { getShop } from "@/lib/shopify/store";
 import { clientIpFromHeaders } from "@/lib/ip";
-import { isSafeRedirectUrl } from "@/lib/validation";
+import { isSafeRedirectUrl, slugify } from "@/lib/validation";
+import { uploadCampaignImageFromDataUrl } from "@/lib/images/upload-from-data-url";
+import { dispatchPendingCoupons } from "@/lib/communication/gateway";
 import type { CampaignEventType, CampaignStatus } from "@/lib/types";
 import { z } from "zod";
 
@@ -82,13 +85,27 @@ const couponRulesSchema = z.object({
   pool_low_watermark: z.coerce.number().int().min(0).max(100000).default(100),
 });
 
+const imageUrlSchema = z
+  .string()
+  .trim()
+  .refine(
+    (v) =>
+      !v ||
+      v.startsWith("data:image/") ||
+      z.string().url().safeParse(v).success,
+    "Invalid image URL"
+  )
+  .optional()
+  .or(z.literal(""));
+
 const createCampaignSchema = z
   .object({
     name: z.string().trim().min(2, "Campaign name required").max(80),
     headline: z.string().trim().min(2, "Headline required").max(60),
     description: z.string().trim().max(500).optional().or(z.literal("")),
-    banner_url: z.string().trim().url("Invalid banner image URL").optional().or(z.literal("")),
-    logo_url: z.string().trim().url("Invalid logo image URL").optional().or(z.literal("")),
+    banner_url: imageUrlSchema,
+    og_image_url: imageUrlSchema,
+    logo_url: imageUrlSchema,
     terms: z.string().trim().max(1000).optional().or(z.literal("")),
     coupon_prefix: z
       .string()
@@ -101,6 +118,21 @@ const createCampaignSchema = z
     prizes: z.array(prizeSchema).min(1, "Add at least one reward").max(8),
     campaign_type: campaignTypeSchema,
     coupon_rules: couponRulesSchema.optional(),
+    slug: z
+      .string()
+      .trim()
+      .min(2, "Campaign URL must be at least 2 characters")
+      .max(40, "Campaign URL is too long")
+      .regex(/^[a-z0-9-]+$/, "Use lowercase letters, numbers and hyphens only")
+      .optional(),
+    source_label: z.string().trim().min(1).max(60).optional(),
+    source_slug: z
+      .string()
+      .trim()
+      .min(1)
+      .max(40)
+      .regex(/^[a-z0-9_-]+$/, "Source slug: letters, numbers, - or _ only")
+      .optional(),
     // When true the campaign is created live (status='active') instead of a draft.
     publish: z.coerce.boolean().default(false),
   })
@@ -112,14 +144,23 @@ const createCampaignSchema = z
         message: "Coupon Drop campaigns require discount rules",
       });
     }
+    const hasSourceLabel = !!data.source_label?.trim();
+    const hasSourceSlug = !!data.source_slug?.trim();
+    if (hasSourceLabel !== hasSourceSlug) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["source_slug"],
+        message: "Both source name and source slug are required for a tracking URL",
+      });
+    }
   });
 
 const updateCampaignSchema = z.object({
   name: z.string().trim().min(2, "Campaign name required").max(80),
   headline: z.string().trim().min(2, "Headline required").max(60),
   description: z.string().trim().max(500).optional().or(z.literal("")),
-  banner_url: z.string().trim().url("Invalid banner image URL").optional().or(z.literal("")),
-  logo_url: z.string().trim().url("Invalid logo image URL").optional().or(z.literal("")),
+  banner_url: imageUrlSchema,
+  logo_url: imageUrlSchema,
   terms: z.string().trim().max(1000).optional().or(z.literal("")),
   coupon_prefix: z
     .string()
@@ -154,6 +195,7 @@ export async function createCampaignAction(
     headline,
     description,
     banner_url,
+    og_image_url,
     logo_url,
     terms,
     coupon_prefix,
@@ -163,10 +205,20 @@ export async function createCampaignAction(
     campaign_type,
     coupon_rules,
     publish,
+    slug: requestedSlug,
+    source_label,
+    source_slug,
   } = validated.data;
 
   if (starts_at.getTime() >= ends_at.getTime()) {
     return { error: "End date must be after start date" };
+  }
+
+  if (campaign_type === "coupon_drop") {
+    const shop = await getShop(repo.businessId);
+    if (!shop || shop.status !== "active" || !shop.access_token_enc) {
+      return { error: "Connect your Shopify store before creating a Coupon Drop campaign." };
+    }
   }
 
   // Publish intent → go live now, or schedule if the start date is still ahead.
@@ -178,7 +230,18 @@ export async function createCampaignAction(
     : "draft";
 
   try {
-    const slug = await repo.freeCampaignSlug(name);
+    const slug = requestedSlug?.trim()
+      ? slugify(requestedSlug.trim())
+      : await repo.freeCampaignSlug(name);
+    if (!slug) {
+      return { error: "Could not generate a valid campaign URL" };
+    }
+    if (requestedSlug?.trim()) {
+      const taken = await repo.isCampaignSlugTaken(slug);
+      if (taken) {
+        return { error: "This campaign URL is already taken. Choose another." };
+      }
+    }
 
     // Insert campaign — business_id is injected by the repository.
     const inserted = await repo.insert<{ id: string }[]>(
@@ -203,6 +266,37 @@ export async function createCampaignAction(
     const campaign = inserted?.[0];
     if (!campaign) {
       return { error: "Failed to create campaign record" };
+    }
+
+    const resolvedBannerUrl = await uploadCampaignImageFromDataUrl(
+      repo.businessId,
+      campaign.id,
+      banner_url || null,
+      "banner"
+    );
+    const resolvedOgImageUrl = await uploadCampaignImageFromDataUrl(
+      repo.businessId,
+      campaign.id,
+      og_image_url || null,
+      "og"
+    );
+    const resolvedLogoUrl = await uploadCampaignImageFromDataUrl(
+      repo.businessId,
+      campaign.id,
+      logo_url || null,
+      "logo"
+    );
+
+    if (
+      resolvedBannerUrl !== (banner_url || null) ||
+      resolvedOgImageUrl !== (og_image_url || null) ||
+      resolvedLogoUrl !== (logo_url || null)
+    ) {
+      await repo.updateById("campaigns", campaign.id, {
+        banner_url: resolvedBannerUrl,
+        og_image_url: resolvedOgImageUrl,
+        logo_url: resolvedLogoUrl,
+      });
     }
 
     // Insert prizes (scoped through the newly-owned campaign).
@@ -255,7 +349,22 @@ export async function createCampaignAction(
       }
     }
 
+    if (source_label?.trim() && source_slug?.trim()) {
+      try {
+        await repo.createSource(source_slug.trim().toLowerCase(), source_label.trim(), campaign.id);
+      } catch (sourceErr) {
+        console.error("Create campaign source error:", sourceErr);
+        await repo.deleteById("campaigns", campaign.id);
+        const msg = String((sourceErr as Error)?.message ?? "");
+        if (msg.includes("duplicate") || msg.includes("unique")) {
+          return { error: "A tracking source with that slug already exists" };
+        }
+        return { error: "Failed to create tracking source URL" };
+      }
+    }
+
     revalidatePath("/m/campaigns");
+    revalidatePath("/m/sources");
     await repo.audit("campaign.create", "campaign", campaign.id, { name, slug });
     await repo.recordEvent(
       "campaign.created",
@@ -336,12 +445,25 @@ export async function updateCampaignAction(
   }
 
   try {
+    const resolvedBannerUrl = await uploadCampaignImageFromDataUrl(
+      repo.businessId,
+      campaignId,
+      banner_url || null,
+      "banner"
+    );
+    const resolvedLogoUrl = await uploadCampaignImageFromDataUrl(
+      repo.businessId,
+      campaignId,
+      logo_url || null,
+      "logo"
+    );
+
     const affected = await repo.updateById("campaigns", campaignId, {
       name,
       headline,
       description: description || null,
-      banner_url: banner_url || null,
-      logo_url: logo_url || null,
+      banner_url: resolvedBannerUrl,
+      logo_url: resolvedLogoUrl,
       terms: terms || null,
       coupon_prefix: coupon_prefix.toUpperCase(),
       starts_at: starts_at.toISOString(),
@@ -437,10 +559,36 @@ export async function duplicateCampaignAction(
       headline: string;
       description: string | null;
       banner_url: string | null;
+      og_image_url: string | null;
       logo_url: string | null;
       terms: string | null;
       coupon_prefix: string;
-    }>(campaignId);
+      campaign_type: string;
+      starts_at: string;
+      ends_at: string;
+      redirect_enabled: boolean;
+      redirect_delay: number;
+      redirect_destination_type: string;
+      redirect_url: string | null;
+      exp_preloader_enabled: boolean;
+      exp_preloader_duration: number;
+      exp_confetti_enabled: boolean;
+      exp_sound_enabled: boolean;
+      exp_haptics_enabled: boolean;
+      exp_open_native_app: boolean;
+      exp_show_countdown: boolean;
+      exp_allow_skip: boolean;
+      exp_button_text: string | null;
+      exp_theme: string;
+    }>(
+      campaignId,
+      `name, headline, description, banner_url, og_image_url, logo_url, terms, coupon_prefix,
+       campaign_type, starts_at, ends_at,
+       redirect_enabled, redirect_delay, redirect_destination_type, redirect_url,
+       exp_preloader_enabled, exp_preloader_duration, exp_confetti_enabled, exp_sound_enabled,
+       exp_haptics_enabled, exp_open_native_app, exp_show_countdown, exp_allow_skip,
+       exp_button_text, exp_theme`
+    );
 
     if (!oldCampaign) return { error: "Campaign not found" };
 
@@ -459,12 +607,28 @@ export async function duplicateCampaignAction(
         headline: oldCampaign.headline,
         description: oldCampaign.description,
         banner_url: oldCampaign.banner_url,
+        og_image_url: oldCampaign.og_image_url,
         logo_url: oldCampaign.logo_url,
         terms: oldCampaign.terms,
         coupon_prefix: oldCampaign.coupon_prefix,
         status: "draft",
-        starts_at: new Date().toISOString(),
-        ends_at: new Date(Date.now() + 15 * 86400 * 1000).toISOString(), // +15 days default
+        campaign_type: oldCampaign.campaign_type,
+        starts_at: oldCampaign.starts_at,
+        ends_at: oldCampaign.ends_at,
+        redirect_enabled: oldCampaign.redirect_enabled,
+        redirect_delay: oldCampaign.redirect_delay,
+        redirect_destination_type: oldCampaign.redirect_destination_type,
+        redirect_url: oldCampaign.redirect_url,
+        exp_preloader_enabled: oldCampaign.exp_preloader_enabled,
+        exp_preloader_duration: oldCampaign.exp_preloader_duration,
+        exp_confetti_enabled: oldCampaign.exp_confetti_enabled,
+        exp_sound_enabled: oldCampaign.exp_sound_enabled,
+        exp_haptics_enabled: oldCampaign.exp_haptics_enabled,
+        exp_open_native_app: oldCampaign.exp_open_native_app,
+        exp_show_countdown: oldCampaign.exp_show_countdown,
+        exp_allow_skip: oldCampaign.exp_allow_skip,
+        exp_button_text: oldCampaign.exp_button_text,
+        exp_theme: oldCampaign.exp_theme,
       },
       "id"
     );
@@ -495,6 +659,52 @@ export async function duplicateCampaignAction(
         console.error("Duplicate prizes insert error:", pErr);
         await repo.deleteById("campaigns", newCampaign.id);
         return { error: "Failed to copy rewards details" };
+      }
+    }
+
+    if (oldCampaign.campaign_type === "coupon_drop") {
+      const { data: couponConfig } = await repo
+        .select("campaign_coupon_configs", "*")
+        .eq("campaign_id", campaignId)
+        .maybeSingle();
+
+      if (couponConfig) {
+        try {
+          const cfg = couponConfig as unknown as {
+            win_mode: string;
+            discount_type: string;
+            discount_value: number;
+            minimum_subtotal: number | null;
+            usage_limit: number | null;
+            applies_once_per_customer: boolean;
+            expiry_days: number | null;
+            scope_product_ids: string[];
+            scope_collection_ids: string[];
+            currency: string;
+            pool_target: number;
+            pool_low_watermark: number;
+          };
+          await repo.callRpc("coupon_config_upsert", {
+            p_business_id: repo.businessId,
+            p_campaign_id: newCampaign.id,
+            p_win_mode: cfg.win_mode,
+            p_discount_type: cfg.discount_type,
+            p_discount_value: cfg.discount_value,
+            p_minimum_subtotal: cfg.minimum_subtotal ?? null,
+            p_usage_limit: cfg.usage_limit ?? null,
+            p_applies_once_per_customer: cfg.applies_once_per_customer,
+            p_expiry_days: cfg.expiry_days,
+            p_scope_product_ids: cfg.scope_product_ids,
+            p_scope_collection_ids: cfg.scope_collection_ids,
+            p_currency: cfg.currency,
+            p_pool_target: cfg.pool_target,
+            p_pool_low_watermark: cfg.pool_low_watermark,
+          });
+        } catch (cErr) {
+          console.error("Duplicate coupon config error:", cErr);
+          await repo.deleteById("campaigns", newCampaign.id);
+          return { error: "Failed to copy discount rules" };
+        }
       }
     }
 
@@ -567,7 +777,12 @@ export async function retryFailedWhatsAppAction(campaignId: string): Promise<Act
   try {
     const requeued = await repo.updateCouponsForCampaign(
       campaignId,
-      { wa_status: "pending", wa_attempts: 0 },
+      {
+        wa_status: "pending",
+        wa_attempts: 0,
+        wa_last_error: null,
+        wa_next_attempt_at: null,
+      },
       { wa_status: "failed" }
     );
 
@@ -579,6 +794,10 @@ export async function retryFailedWhatsAppAction(campaignId: string): Promise<Act
       { requeued, reason: "manual_retry" },
       await eventContext()
     );
+    const dispatched = await dispatchPendingCoupons(repo.businessId, 50, campaignId);
+    if (dispatched.error && dispatched.sent === 0) {
+      return { error: dispatched.error };
+    }
     return { error: null, success: true };
   } catch (err: any) {
     console.error("Retry WhatsApp error:", err);

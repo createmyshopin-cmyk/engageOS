@@ -8,15 +8,66 @@ import { phoneSchema } from "@/lib/validation";
  * the authenticated principal, never the client.
  */
 
-/** Query params for GET /customers (list). */
-export const listCustomersQuery = z.object({
-  cursor: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
+export const customerRewardFilter = z.enum([
+  "all",
+  "has_code",
+  "active",
+  "redeemed",
+  "no_reward",
+]);
+export type CustomerRewardFilter = z.infer<typeof customerRewardFilter>;
+
+export const customerJoinedFilter = z.enum(["all", "7d", "30d", "90d"]);
+export type CustomerJoinedFilter = z.infer<typeof customerJoinedFilter>;
+
+const dateOnly = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD")
+  .optional();
+
+const customerListFilters = {
   search: z.string().trim().max(120).optional(),
-  sort: z.enum(["created_at"]).optional(),
-  direction: z.enum(["asc", "desc"]).optional(),
-});
+  rewardFilter: customerRewardFilter.optional(),
+  joined: customerJoinedFilter.optional(),
+  joinedFrom: dateOnly,
+  joinedTo: dateOnly,
+};
+
+/** Query params for GET /customers (list). */
+export const listCustomersQuery = z
+  .object({
+    cursor: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    sort: z.enum(["created_at"]).optional(),
+    direction: z.enum(["asc", "desc"]).optional(),
+    ...customerListFilters,
+  })
+  .refine(
+    (q) => {
+      if (!q.joinedFrom || !q.joinedTo) return true;
+      return q.joinedFrom <= q.joinedTo;
+    },
+    { message: "joinedFrom must be on or before joinedTo", path: ["joinedTo"] }
+  );
 export type ListCustomersQuery = z.infer<typeof listCustomersQuery>;
+
+export const customerExportFormat = z.enum(["csv", "xlsx"]);
+export type CustomerExportFormat = z.infer<typeof customerExportFormat>;
+
+/** Query params for GET /customers/export — same filters, no pagination. */
+export const exportCustomersQuery = z
+  .object({
+    ...customerListFilters,
+    format: customerExportFormat.optional(),
+  })
+  .refine(
+    (q) => {
+      if (!q.joinedFrom || !q.joinedTo) return true;
+      return q.joinedFrom <= q.joinedTo;
+    },
+    { message: "joinedFrom must be on or before joinedTo", path: ["joinedTo"] }
+  );
+export type ExportCustomersQuery = z.infer<typeof exportCustomersQuery>;
 
 /** Route param for /customers/[id]. */
 export const customerIdParam = z.object({

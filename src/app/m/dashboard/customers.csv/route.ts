@@ -1,57 +1,67 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { getAllCustomers } from "@/lib/db/merchant";
-import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { authorizeMerchantWrite } from "@/lib/merchant-route-auth";
+import { buildCustomersCsv } from "@/server/modules/customers/csv";
+import { buildCustomersXlsx } from "@/server/modules/customers/excel";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Escape a CSV field per RFC 4180. */
-function csvField(value: string): string {
-  if (/[",\n\r]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
 /**
- * Customer CSV export — tenant scoped to the authenticated merchant session.
- * The business is resolved ONLY from the session, never from the URL.
+ * Customer export — tenant scoped to the authenticated merchant session.
+ * Supports ?format=csv (default) or ?format=xlsx.
  */
-export async function GET(): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return new NextResponse("Unauthorized", { status: 401 });
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const auth = await authorizeMerchantWrite();
+  if (!auth.ok) {
+    return new NextResponse("Unauthorized", { status: auth.response.status });
   }
+  const { repo } = auth;
+
+  const format = request.nextUrl.searchParams.get("format") === "xlsx" ? "xlsx" : "csv";
 
   try {
     const business = await repo.getBusiness<{ slug: string }>("slug");
-
     const customers = await getAllCustomers(repo.businessId);
 
-    const rows = ["Name,Phone,Registered On"];
-    for (const c of customers) {
-      rows.push(
-        [
-          csvField(c.name),
-          csvField(c.phone),
-          new Date(c.created_at).toISOString().slice(0, 10),
-        ].join(",")
-      );
-    }
-    // BOM so Excel opens Malayalam names as UTF-8 correctly.
-    const body = "﻿" + rows.join("\r\n") + "\r\n";
+    const rows = customers.map((c) => ({
+      name: c.name,
+      phone: c.phone,
+      email: null,
+      createdAt: c.created_at,
+      latestCode: null,
+      latestPrizeName: null,
+      rewardCount: 0,
+    }));
 
     const date = new Date().toISOString().slice(0, 10);
-    const filename = `${business?.slug ?? "customers"}-customers-${date}.csv`;
+    const slug = business?.slug ?? "customers";
+    const filename =
+      format === "xlsx"
+        ? `${slug}-customers-${date}.xlsx`
+        : `${slug}-customers-${date}.csv`;
 
-    // Track the export as an immutable campaign event (tenant-scoped, no
-    // campaign). Best-effort — never blocks the download.
     await repo.recordEvent("customer.export", null, {
-      format: "csv",
+      format,
       rowCount: customers.length,
-    });
+      source: "dashboard_csv",
+    }).catch(() => {});
 
-    return new NextResponse(body, {
+    if (format === "xlsx") {
+      const body = buildCustomersXlsx(rows);
+      return new NextResponse(new Uint8Array(body), {
+        status: 200,
+        headers: {
+          "Content-Type":
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+
+    const csv = buildCustomersCsv(rows);
+    return new NextResponse(csv, {
       status: 200,
       headers: {
         "Content-Type": "text/csv; charset=utf-8",

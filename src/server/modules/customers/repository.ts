@@ -12,7 +12,7 @@ import type { Customer360DTO } from "@/server/modules/customers/dto";
  * invariants (dedup, consent mirroring, merge repointing) stay in SQL.
  */
 
-const LIST_COLUMNS = "id, phone, name, email, created_at";
+
 const PROFILE_COLUMNS =
   "id, phone, name, full_name, email, gender, birthday, anniversary, language, " +
   "timezone, source, marketing_opt_in, email_opt_in, sms_opt_in, wa_opt_out, created_at, updated_at";
@@ -23,43 +23,35 @@ export class CustomerRepository extends Repository {
   }
 
   /**
-   * Keyset-paginated customer list, newest-first by (created_at, id). Fetches
-   * limit + 1 to detect a further page. Optional case-insensitive search over
-   * name/phone/email. Excludes soft-deleted rows.
+   * Keyset-paginated campaign customer list (played or registered via a campaign).
+   * Excludes Shopify-synced store customers. Newest-first by (created_at, id).
    */
   async list(opts: {
     limit: number;
     cursor: Cursor | null;
     search: string | null;
     direction: "asc" | "desc";
+    rewardFilter: string;
+    joinedDays: number | null;
+    joinedFrom: string | null;
+    joinedTo: string | null;
   }): Promise<CustomerListRow[]> {
-    let q = this.tenant
-      .select("customers", LIST_COLUMNS)
-      .is("deleted_at", null);
-
-    if (opts.search) {
-      const term = `%${opts.search.replace(/[%_]/g, (m) => `\\${m}`)}%`;
-      q = q.or(`name.ilike.${term},phone.ilike.${term},email.ilike.${term}`);
-    }
-
-    const ascending = opts.direction === "asc";
-    // Keyset: for desc, next page is rows strictly "before" the cursor tuple.
-    if (opts.cursor) {
-      const op = ascending ? "gt" : "lt";
-      // (created_at, id) tuple comparison via or() for the tie-break on id.
-      q = q.or(
-        `created_at.${op}.${opts.cursor.ts},and(created_at.eq.${opts.cursor.ts},id.${op}.${opts.cursor.id})`
-      );
-    }
-
-    q = q
-      .order("created_at", { ascending })
-      .order("id", { ascending })
-      .limit(opts.limit + 1);
-
-    const { data, error } = await q;
-    if (error) throw new Error(`customers.list failed: ${error.message}`);
-    return (data ?? []) as unknown as CustomerListRow[];
+    const rows = await this.tenant.rpcSelect<CustomerListRow>(
+      "merchant_list_campaign_customers",
+      {
+        p_business_id: this.businessId,
+        p_limit: opts.limit + 1,
+        p_cursor_ts: opts.cursor?.ts ?? null,
+        p_cursor_id: opts.cursor?.id ?? null,
+        p_search: opts.search,
+        p_direction: opts.direction,
+        p_reward_filter: opts.rewardFilter,
+        p_joined_days: opts.joinedDays,
+        p_joined_from: opts.joinedFrom,
+        p_joined_to: opts.joinedTo,
+      }
+    );
+    return rows;
   }
 
   /** Fetch one customer's full profile, tenant-scoped. Null if not found/foreign. */

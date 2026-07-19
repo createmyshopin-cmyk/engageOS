@@ -102,6 +102,8 @@ export const apiClient = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { method: "GET", signal }),
   post: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     request<T>(path, { method: "POST", body, signal }),
+  put: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
+    request<T>(path, { method: "PUT", body, signal }),
   patch: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     request<T>(path, { method: "PATCH", body, signal }),
   del: <T>(path: string, signal?: AbortSignal) => request<T>(path, { method: "DELETE", signal }),

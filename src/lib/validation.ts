@@ -19,6 +19,11 @@ export const phoneSchema = z
     message: "Enter a valid 10-digit mobile number",
   });
 
+export const deviceIdSchema = z
+  .string()
+  .trim()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i, "Invalid device");
+
 export const playRequestSchema = z.object({
   merchantSlug: z
     .string()
@@ -36,7 +41,11 @@ export const playRequestSchema = z.object({
     // letters (incl. Malayalam), spaces, dots — no digits/symbols
     .regex(/^[\p{L}\p{M} .]+$/u, "Enter a valid name"),
   phone: phoneSchema,
+  whatsappConsent: z
+    .boolean()
+    .refine((accepted) => accepted, "Accept WhatsApp updates to continue"),
   source: z.string().optional(),
+  deviceId: deviceIdSchema,
 });
 export type PlayRequest = z.infer<typeof playRequestSchema>;
 
@@ -80,7 +89,7 @@ export const staffLoginSchema = z.object({
   pin: z
     .string()
     .trim()
-    .regex(/^\d{4,6}$/, "PIN must be 4-6 digits"),
+    .regex(/^\d{4,8}$/, "PIN must be 4-8 digits"),
 });
 export type StaffLogin = z.infer<typeof staffLoginSchema>;
 
@@ -103,7 +112,7 @@ export const onboardMerchantSchema = z.object({
   businessName: z.string().trim().min(2, "Shop name required").max(80),
   city: z.string().trim().max(60).optional().or(z.literal("")),
   ownerPhone: phoneSchema,
-  pin: z.string().trim().regex(/^\d{4,6}$/, "PIN must be 4-6 digits"),
+  pin: z.string().trim().regex(/^\d{6,8}$/, "PIN must be 6-8 digits"),
   campaignName: z.string().trim().min(2, "Campaign name required").max(80),
   headline: z.string().trim().min(2).max(60).default("Scratch & Win this Onam!"),
   endsAt: z.coerce.date().refine((d) => d.getTime() > Date.now(), {

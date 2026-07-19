@@ -8,6 +8,12 @@ import { decodeCursor, type Cursor } from "@/server/http/pagination";
 import { CampaignService } from "@/server/modules/campaigns/service";
 import type { ListCampaignsQuery } from "@/server/modules/campaigns/validator";
 
+/** Map legacy/UI alias `ended` to the DB value `completed`. */
+function normalizeCampaignStatusFilter(status: string | null): string | null {
+  if (!status) return null;
+  return status === "ended" ? "completed" : status;
+}
+
 /**
  * CampaignController — orchestrates the campaign read/manage endpoints. Thin:
  * checks scope, decodes the cursor, delegates to the service, envelopes the
@@ -28,7 +34,7 @@ export class CampaignController extends Controller {
     const { items, page } = await this.service.list({
       limit: query.limit ?? 25,
       cursor,
-      status: query.status ?? null,
+      status: normalizeCampaignStatusFilter(query.status ?? null),
     });
     return paginated(items, page, { correlationId: this.ctx.correlationId, version: this.ctx.version });
   }

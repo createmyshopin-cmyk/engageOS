@@ -2,6 +2,7 @@ import "server-only";
 import { createClient } from "@supabase/supabase-js";
 import type { CampaignDisplay, PlayResult, RedeemResult } from "@/lib/types";
 import type { ProviderKey, TrackingConfig } from "@/lib/tracking/types";
+import { dispatchZapierEvent } from "@/lib/zapier/dispatch";
 
 /**
  * Service-role client for RPCs. Server-only module — importing it from
@@ -97,6 +98,7 @@ export async function playCampaign(params: {
   name: string;
   ip: string;
   source?: string;
+  deviceId?: string;
 }): Promise<PlayResult> {
   const { data, error } = await adminClient().rpc("play_campaign", {
     p_merchant_slug: params.merchantSlug,
@@ -105,6 +107,7 @@ export async function playCampaign(params: {
     p_name: params.name,
     p_ip: params.ip,
     p_source: params.source ?? "direct",
+    p_device_id: params.deviceId ?? null,
   });
   if (error) throw new Error(`play_campaign failed: ${error.message}`);
   return data as PlayResult;
@@ -152,7 +155,14 @@ export async function recordCampaignEvent(params: {
     });
     if (error) {
       console.error(`recordCampaignEvent(${params.eventType}) failed:`, error.message);
+      return;
     }
+    dispatchZapierEvent(params.businessId, params.eventType, {
+      campaign_id: params.campaignId ?? null,
+      actor_type: params.actorType,
+      actor_id: params.actorId ?? null,
+      ...(params.metadata ?? {}),
+    });
   } catch (err) {
     console.error(`recordCampaignEvent(${params.eventType}) threw:`, err);
   }
@@ -169,6 +179,7 @@ export { adminClient };
 const CUSTOMER_EXPERIENCE_EVENTS = new Set([
   "reward.viewed",
   "reward.claimed",
+  "scratch.completed",
   "redirect.started",
   "redirect.opened",
   "redirect.completed",

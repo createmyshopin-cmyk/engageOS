@@ -1,0 +1,19 @@
+{
+  "name": "engageos-zapier",
+  "version": "1.0.0",
+  "description": "EngageOS integration for Zapier — campaign funnel triggers and customer actions.",
+  "main": "index.js",
+  "scripts": {
+    "test": "zapier test"
+  },
+  "dependencies": {
+    "zapier-platform-core": "17.0.0"
+  },
+  "devDependencies": {
+    "zapier-platform-cli": "17.0.0"
+  },
+  "engines": {
+    "node": ">=18",
+    "npm": ">=9"
+  }
+}

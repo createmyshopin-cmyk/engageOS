@@ -171,9 +171,9 @@ export default async function CampaignDetailPage({ params }: PageProps) {
             )}
           </div>
           <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <HealthStat label="Codes Minted" value={couponDropStats.codes_minted} />
-            <HealthStat label="Available" value={couponDropStats.codes_available} />
-            <HealthStat label="Claimed" value={couponDropStats.codes_claimed} />
+            <HealthStat label="Codes Issued" value={couponDropStats.codes_minted} />
+            <HealthStat label="Active" value={couponDropStats.codes_available} />
+            <HealthStat label="Linked to Shopify" value={couponDropStats.codes_claimed} />
             <HealthStat label="Redeemed" value={couponDropStats.codes_redeemed} />
             <HealthStat label="Orders Attributed" value={couponDropStats.orders_attributed} />
             <div>
@@ -190,6 +190,12 @@ export default async function CampaignDetailPage({ params }: PageProps) {
             </div>
             <HealthStat label="Fallback Issued" value={couponDropStats.fallback_issued} />
           </div>
+          <p className="px-5 pb-5 text-[11px] text-neutral-500 leading-relaxed">
+            Customer codes like <span className="font-mono font-semibold">SINDUR0122-XXXX</span> are
+            added inside Shopify under{" "}
+            <strong>Discounts → your campaign title (parent discount) → Codes</strong> — not as separate
+            discounts in the list. Search the exact code in the Codes tab of the parent discount.
+          </p>
         </div>
       )}
 

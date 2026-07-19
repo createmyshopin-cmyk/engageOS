@@ -1,5 +1,8 @@
 import "server-only";
 import type { ShopifyClient } from "@/lib/shopify/client";
+import { shopifyDiscountAdminUrl } from "@/lib/shopify/storefront-url";
+
+export { shopifyDiscountAdminUrl };
 
 /**
  * Shopify Discount API orchestration (GraphQL Admin API). Pure functions over a
@@ -28,6 +31,11 @@ export interface DiscountConfig {
   endsAt?: string | null;
 }
 
+/** Normalize coupon codes for Shopify + DB comparison (uppercase, trimmed). */
+export function normalizeCouponCode(code: string): string {
+  return code.trim().toUpperCase();
+}
+
 export class ShopifyDiscountError extends Error {
   constructor(message: string) {
     super(message);
@@ -38,6 +46,15 @@ export class ShopifyDiscountError extends Error {
 const CREATE_PARENT_MUTATION = `
   mutation couponDropCreateParent($basicCodeDiscount: DiscountCodeBasicInput!) {
     discountCodeBasicCreate(basicCodeDiscount: $basicCodeDiscount) {
+      codeDiscountNode { id }
+      userErrors { field message }
+    }
+  }
+`;
+
+const UPDATE_PARENT_MUTATION = `
+  mutation couponDropUpdateParent($id: ID!, $basicCodeDiscount: DiscountCodeBasicInput!) {
+    discountCodeBasicUpdate(id: $id, basicCodeDiscount: $basicCodeDiscount) {
       codeDiscountNode { id }
       userErrors { field message }
     }
@@ -70,6 +87,50 @@ const BULK_CREATION_QUERY = `
     }
   }
 `;
+
+const VERIFY_CODE_QUERY = `
+  query verifyDiscountCode($code: String!) {
+    codeDiscountNodeByCode(code: $code) {
+      id
+      codeDiscount {
+        ... on DiscountCodeBasic {
+          title
+          status
+        }
+      }
+    }
+  }
+`;
+
+const PARENT_CODES_QUERY = `
+  query parentCodes($parentId: ID!, $codeQuery: String!) {
+    codeDiscountNode(id: $parentId) {
+      id
+      codeDiscount {
+        ... on DiscountCodeBasic {
+          title
+          status
+          codes(first: 5, query: $codeQuery) {
+            nodes {
+              code
+              id
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export interface ShopifyCodeVerification {
+  found: boolean;
+  code: string;
+  parentTitle?: string;
+  parentStatus?: string;
+  parentGid?: string;
+  redeemId?: string;
+  adminUrl?: string;
+}
 
 /**
  * Create the parent discount (the rule). A single placeholder code is required
@@ -134,6 +195,30 @@ export async function createParentDiscount(
   return gid;
 }
 
+/** Rename an existing parent discount so merchants see the campaign title in Admin. */
+export async function updateParentDiscountTitle(
+  client: ShopifyClient,
+  parentGid: string,
+  title: string
+): Promise<void> {
+  const data = await client.graphql<{
+    discountCodeBasicUpdate?: {
+      codeDiscountNode?: { id?: string } | null;
+      userErrors?: Array<{ field?: string[]; message?: string }>;
+    };
+  }>(UPDATE_PARENT_MUTATION, {
+    id: parentGid,
+    basicCodeDiscount: { title },
+  });
+
+  const errors = data.discountCodeBasicUpdate?.userErrors ?? [];
+  if (errors.length > 0) {
+    throw new ShopifyDiscountError(
+      errors.map((e) => e.message ?? "unknown").join("; ")
+    );
+  }
+}
+
 /**
  * Bulk-attach unique redeem codes to a parent discount. Shopify accepts up to
  * 100 codes per bulk call, so callers should chunk. Returns the async
@@ -147,6 +232,7 @@ export async function bulkAddCodes(
   codes: string[]
 ): Promise<string | null> {
   if (codes.length === 0) return null;
+  const normalized = codes.map((c) => normalizeCouponCode(c));
   const data = await client.graphql<{
     discountRedeemCodeBulkAdd?: {
       bulkCreation?: { id?: string } | null;
@@ -154,7 +240,7 @@ export async function bulkAddCodes(
     };
   }>(BULK_ADD_MUTATION, {
     discountId: parentGid,
-    codes: codes.map((code) => ({ code })),
+    codes: normalized.map((code) => ({ code })),
   });
 
   const errors = data.discountRedeemCodeBulkAdd?.userErrors ?? [];
@@ -237,7 +323,7 @@ export async function pollBulkCreation(
     const conn = data.discountRedeemCodeBulkCreation?.codes;
     for (const n of conn?.nodes ?? []) {
       const hasError = (n.errors?.length ?? 0) > 0;
-      const code = n.code?.trim();
+      const code = normalizeCouponCode(n.code ?? "");
       if (!code || hasError) continue;
       codes.push({ code, redeemId: n.discountRedeemCode?.id ?? null });
     }
@@ -245,6 +331,68 @@ export async function pollBulkCreation(
   } while (after);
 
   return { done, failedCount, codes };
+}
+
+/**
+ * Confirm a coupon code is live in Shopify — by global code lookup and/or the
+ * stored redeem-code GID. Bulk-added Coupon Drop codes appear under their
+ * parent discount's code list, not as separate discounts in Admin.
+ */
+export async function verifyDiscountCodeInShopify(
+  client: ShopifyClient,
+  shopDomain: string,
+  code: string,
+  redeemId?: string | null,
+  parentGid?: string | null
+): Promise<ShopifyCodeVerification> {
+  const normalized = normalizeCouponCode(code);
+  const out: ShopifyCodeVerification = { found: false, code: normalized };
+
+  const byCode = await client.graphql<{
+    codeDiscountNodeByCode?: {
+      id?: string;
+      codeDiscount?: { title?: string; status?: string };
+    } | null;
+  }>(VERIFY_CODE_QUERY, { code: normalized });
+
+  const parent = byCode.codeDiscountNodeByCode;
+  if (parent?.id) {
+    out.found = true;
+    out.parentGid = parent.id;
+    out.parentTitle = parent.codeDiscount?.title;
+    out.parentStatus = parent.codeDiscount?.status;
+    out.adminUrl = shopifyDiscountAdminUrl(shopDomain, parent.id);
+    if (redeemId) out.redeemId = redeemId;
+    return out;
+  }
+
+  if (parentGid) {
+    const onParent = await client.graphql<{
+      codeDiscountNode?: {
+        id?: string;
+        codeDiscount?: {
+          title?: string;
+          status?: string;
+          codes?: { nodes?: Array<{ code?: string; id?: string }> };
+        };
+      } | null;
+    }>(PARENT_CODES_QUERY, { parentId: parentGid, codeQuery: `code:${normalized}` });
+
+    const node = onParent.codeDiscountNode;
+    const match = node?.codeDiscount?.codes?.nodes?.find(
+      (n) => normalizeCouponCode(n.code ?? "") === normalized
+    );
+    if (match) {
+      out.found = true;
+      out.parentGid = node?.id ?? parentGid;
+      out.parentTitle = node?.codeDiscount?.title;
+      out.parentStatus = node?.codeDiscount?.status;
+      out.redeemId = match.id ?? redeemId ?? undefined;
+      out.adminUrl = shopifyDiscountAdminUrl(shopDomain, out.parentGid);
+    }
+  }
+
+  return out;
 }
 
 /** Promise-based delay (app runtime; not a workflow script). */

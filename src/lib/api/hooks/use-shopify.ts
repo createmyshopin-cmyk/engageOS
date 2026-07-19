@@ -196,3 +196,15 @@ export function useRefreshShopifyScopes() {
     },
   });
 }
+
+/** Re-run Coupon Drop Shopify setup for error campaigns (or one campaign). */
+export function useRetryCouponDrop() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { campaignId?: string } = {}) =>
+      apiClient.post<{ retried: string[] }>("/api/v1/shopify/coupon-drops/retry", input),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: shopifyKeys.couponDrops() });
+    },
+  });
+}

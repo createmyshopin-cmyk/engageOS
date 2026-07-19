@@ -1,15 +1,18 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   KeyRound,
   Link2,
   Loader2,
   Plug,
   Send,
+  Settings,
   ShieldCheck,
   Trash2,
 } from "lucide-react";
+import { WatiError, WatiNotice } from "./wati-alerts";
 
 /** Bounce to login on 401, otherwise return parsed JSON. */
 async function fetchWati(url: string, init?: RequestInit): Promise<Record<string, unknown>> {
@@ -47,7 +50,8 @@ interface WatiTemplate {
 
 const ENDPOINT = "/api/m/integrations/wati";
 
-export function WatiSettings() {
+export function WatiSettings({ variant = "full" }: { variant?: "full" | "console" }) {
+  const isConsole = variant === "console";
   const [loaded, setLoaded] = useState(false);
   const [integration, setIntegration] = useState<Integration | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +110,12 @@ export function WatiSettings() {
     return () => clearTimeout(t);
   }, [load]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   const loadTemplates = useCallback(async () => {
     try {
       const json = await fetchWati(`${ENDPOINT}/templates`);
@@ -146,7 +156,7 @@ export function WatiSettings() {
         setError((json.error as string) ?? "Failed to connect");
       } else {
         setApiToken("");
-        setNotice(`Connected WATI: “${json.displayName ?? json.channelName ?? "WhatsApp"}”.`);
+        setNotice(`Connected WATI: “${json.displayName ?? json.channelName ?? "WhatsApp"}”. Open the WATI console to configure templates.`);
         await load();
       }
     } finally {
@@ -227,22 +237,50 @@ export function WatiSettings() {
     );
   }
 
+  if (isConsole && loaded && !integration) {
+    return (
+      <div className="rounded-2xl border border-[#FCD34D] bg-[#FFFBEB] p-5">
+        <p className="text-xs font-bold text-[#92400E]">
+          WATI isn&apos;t connected. Set up your gateway on the connection page first.
+        </p>
+        <Link
+          href="/m/integrations/wati"
+          className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-bold text-[#2563EB] hover:text-[#1D4ED8]"
+        >
+          <Settings className="size-3.5" />
+          Open connection settings →
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
-      {notice && (
-        <div className="rounded-2xl border border-[#16A34A]/25 bg-[#F0FDF4] p-4 text-xs font-bold text-[#15803D]">
-          {notice}
-        </div>
-      )}
+      {notice && <WatiNotice onDismiss={() => setNotice(null)}>{notice}</WatiNotice>}
       {error && (
-        <div className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-4 text-xs font-bold text-[#B91C1C]">
+        <WatiError onDismiss={() => setError(null)} onRetry={() => load()}>
           {error}
+        </WatiError>
+      )}
+
+      {isConsole && integration && (
+        <div className="rounded-2xl border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
+          <p className="text-[11px] font-medium text-[#6B7280]">
+            Pick approved templates and toggles for automatic coupon and participation messages.
+            Webhook setup lives on the{" "}
+            <span className="font-bold text-[#111827]">Automation</span> tab; connection credentials
+            on{" "}
+            <Link href="/m/integrations/wati" className="font-bold text-[#2563EB] hover:underline">
+              Connection settings
+            </Link>
+            .
+          </p>
         </div>
       )}
 
       {integration ? (
         <>
-          {/* Connected card */}
+          {!isConsole && (
           <div className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center justify-center size-10 rounded-2xl bg-[#EFF6FF]">
@@ -286,9 +324,10 @@ export function WatiSettings() {
               </p>
             )}
           </div>
+          )}
 
           {/* Webhook Configuration */}
-          {webhookUrl && (
+          {!isConsole && webhookUrl && (
             <div className="rounded-2xl border border-[#E5E7EB] bg-[#F9FAFB] p-5 space-y-3">
               <div>
                 <h3 className="text-sm font-black text-[#111827]">Webhook Configuration</h3>
@@ -317,7 +356,6 @@ export function WatiSettings() {
             </div>
           )}
 
-          {/* WATI templates settings */}
           <form onSubmit={saveCouponSettings} className="rounded-2xl border border-[#E5E7EB] bg-white p-5 space-y-6">
             {/* Section 1: Coupon delivery */}
             <div className="space-y-4">

@@ -11,11 +11,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient, type ApiResult } from "@/lib/api/client";
 import type { LoyaltyProfileDTO } from "@/lib/api/types";
+import { loyaltyKeys } from "@/lib/api/hooks/use-loyalty-overview";
 
-export const loyaltyKeys = {
-  all: ["loyalty"] as const,
-  detail: (customerId: string) => [...loyaltyKeys.all, customerId] as const,
-};
+export { loyaltyKeys };
 
 /** A customer's loyalty/engagement standing. Disabled until a customer is chosen. */
 export function useLoyaltyProfile(customerId: string | null) {

@@ -1,6 +1,16 @@
 import "server-only";
 import type { NextRequest } from "next/server";
 import { getMerchantSession } from "@/lib/merchant-session";
+import {
+  hashSheetsApiKey,
+  looksLikeSheetsApiKey,
+} from "@/lib/google-sheets/keys";
+import { getGoogleSheetsIntegrationByApiKeyHash } from "@/lib/google-sheets/store";
+import {
+  hashMerchantApiKey,
+  looksLikeMerchantApiKey,
+} from "@/lib/zapier/keys";
+import { findActiveKeyByHash, touchKeyLastUsed } from "@/lib/zapier/store";
 import type { MerchantSessionPayload, MerchantRole } from "@/lib/types";
 import { UnauthorizedError, ForbiddenError } from "@/server/core/errors";
 
@@ -69,12 +79,64 @@ const merchantCookieResolver: AuthResolver = {
   },
 };
 
+function bearerTokenFromRequest(req: NextRequest): string | null {
+  const auth = req.headers?.get("authorization")?.trim();
+  if (!auth?.toLowerCase().startsWith("bearer ")) return null;
+  const token = auth.slice(7).trim();
+  return token || null;
+}
+
+/** Merchant programmatic API key (Zapier, automations). */
+const merchantApiKeyResolver: AuthResolver = {
+  name: "merchant_api_key",
+  async resolve(req: NextRequest): Promise<Principal | null> {
+    const token = bearerTokenFromRequest(req);
+    if (!token || !looksLikeMerchantApiKey(token)) return null;
+
+    const key = await findActiveKeyByHash(hashMerchantApiKey(token));
+    if (!key) return null;
+
+    touchKeyLastUsed(key.id);
+
+    return {
+      kind: "api_key",
+      businessId: key.business_id,
+      actorId: key.id,
+      role: "owner",
+      scopes: key.scopes.length > 0 ? key.scopes : ["read", "write", "zapier:hooks"],
+    };
+  },
+};
+
+/** Google Sheets export API key — scoped to sheets export endpoints. */
+const googleSheetsApiKeyResolver: AuthResolver = {
+  name: "google_sheets_api_key",
+  async resolve(req: NextRequest): Promise<Principal | null> {
+    const token = bearerTokenFromRequest(req);
+    if (!token || !looksLikeSheetsApiKey(token)) return null;
+
+    const integration = await getGoogleSheetsIntegrationByApiKeyHash(hashSheetsApiKey(token));
+    if (!integration || integration.status !== "connected") return null;
+
+    return {
+      kind: "api_key",
+      businessId: integration.business_id,
+      actorId: integration.id,
+      role: "owner",
+      scopes: ["read", "sheets:export"],
+    };
+  },
+};
+
 /**
- * Ordered resolver chain. Bearer API-key resolver slots in here later:
- *   `[bearerApiKeyResolver, merchantCookieResolver]`
- * No controller changes required — the seam is intentional.
+ * Ordered resolver chain. API keys are tried before cookies so a programmatic
+ * caller cannot accidentally inherit a browser session.
  */
-const RESOLVERS: readonly AuthResolver[] = [merchantCookieResolver];
+const RESOLVERS: readonly AuthResolver[] = [
+  merchantApiKeyResolver,
+  googleSheetsApiKeyResolver,
+  merchantCookieResolver,
+];
 
 /**
  * Authenticate a request, or throw UnauthorizedError. This is the single entry

@@ -3,8 +3,10 @@ import { after } from "next/server";
 import { playRequestSchema, normalizeSource } from "@/lib/validation";
 import { playCampaign } from "@/lib/db/rpc";
 import { clientIpFromHeaders } from "@/lib/ip";
-import { syncPlayToWacrm } from "@/lib/wacrm/sync";
-import { syncPlayToWati } from "@/lib/wati/sync";
+import { guardPlayRequest } from "@/lib/play/abuse-guard";
+import { syncPlayResult } from "@/lib/communication/gateway";
+import { setWhatsAppConsentByPhone } from "@/lib/whatsapp/consent";
+import { finalizeCouponDropPlay } from "@/lib/shopify/coupon-drop-orchestrator";
 import type { PlayResult } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -37,74 +39,120 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
     );
   }
 
+  const ip = clientIpFromHeaders(req.headers);
+
   try {
-    const result = await playCampaign({
+    const guard = await guardPlayRequest({
+      ip,
+      merchantSlug: parsed.data.merchantSlug,
+      campaignSlug: parsed.data.campaignSlug,
+      deviceId: parsed.data.deviceId,
+    });
+    if (guard === "rate_limited") {
+      return NextResponse.json(
+        { ok: true, result: { status: "rate_limited" } },
+        { status: 200 }
+      );
+    }
+
+    let result = await playCampaign({
       merchantSlug: parsed.data.merchantSlug,
       campaignSlug: parsed.data.campaignSlug,
       phone: parsed.data.phone,
       name: parsed.data.name,
-      ip: clientIpFromHeaders(req.headers),
+      ip,
       source: normalizeSource(parsed.data.source),
+      deviceId: parsed.data.deviceId,
     });
 
-    // Sync to integrations AFTER the response is sent — contact upsert + optional
-    // coupon delivery must never slow down or break the scratch experience.
-    after(() => {
-      void syncPlayToWacrm({
+    if (
+      result.status === "ok" &&
+      result.won &&
+      result.campaign_id &&
+      result.coupon_id
+    ) {
+      result = await finalizeCouponDropPlay(result);
+    }
+
+    after(async () => {
+      const { adminClient } = await import("@/lib/db/rpc");
+      const { data: business } = await adminClient()
+        .from("businesses")
+        .select("id")
+        .eq("slug", parsed.data.merchantSlug)
+        .maybeSingle<{ id: string }>();
+      if (!business) return;
+
+      if (result.status === "ok") {
+        await setWhatsAppConsentByPhone({
+          businessId: business.id,
+          phone: parsed.data.phone,
+          granted: true,
+          source: `campaign_registration:${parsed.data.campaignSlug}`,
+          campaignSlug: parsed.data.campaignSlug,
+          disclosureText:
+            "I agree to receive this reward and future offers on WhatsApp. I can reply STOP at any time.",
+          evidence: {
+            source: normalizeSource(parsed.data.source),
+            deviceId: parsed.data.deviceId,
+          },
+        });
+      }
+
+      await syncPlayResult({
         merchantSlug: parsed.data.merchantSlug,
         campaignSlug: parsed.data.campaignSlug,
         phone: parsed.data.phone,
         name: parsed.data.name,
         result,
       });
-      void syncPlayToWati({
-        merchantSlug: parsed.data.merchantSlug,
-        campaignSlug: parsed.data.campaignSlug,
-        phone: parsed.data.phone,
-        name: parsed.data.name,
-        result,
-      });
-      // Coupon Drop: mint the customer's code in Shopify in real time, against
-      // the won tier's parent discount, then link it to the coupon row. Runs off
-      // the response path (reveal is already sent). On any failure the customer
-      // keeps the internal fallback code play_campaign already issued.
-      if (
-        result.status === "ok" &&
-        result.won &&
-        result.campaign_id &&
-        result.prize_id &&
-        result.coupon_id &&
-        result.coupon_code
-      ) {
-        const mintArgs = {
-          campaignId: result.campaign_id,
-          prizeId: result.prize_id,
-          couponId: result.coupon_id,
-          code: result.coupon_code,
-          parentGid: result.shopify_parent_discount_id ?? null,
-        };
-        void (async () => {
-          try {
-            const { mintCouponForWin } = await import(
-              "@/lib/shopify/coupon-drop-orchestrator"
-            );
-            // Resolve the owning business from the campaign config, server-side.
-            const { adminClient } = await import("@/lib/db/rpc");
-            const { data } = await adminClient()
-              .from("campaign_coupon_configs")
-              .select("business_id")
-              .eq("campaign_id", mintArgs.campaignId)
-              .maybeSingle();
-            const businessId = (data as { business_id: string } | null)?.business_id;
-            if (!businessId) {
-              // Not a coupon_drop campaign (or no config) — nothing to mint.
-              return;
-            }
-            await mintCouponForWin({ businessId, ...mintArgs });
-          } catch (err) {
-            console.error("coupon real-time mint error:", err);
-          }
-        })();
+
+      if (result.status === "ok") {
+        const { enqueueCommunicationJob } = await import("@/lib/communication/outbox");
+        const { CommunicationEvents } = await import("@/lib/communication/events");
+
+        const { data: customer } = await adminClient()
+          .from("customers")
+          .select("id")
+          .eq("business_id", business.id)
+          .eq("phone", parsed.data.phone)
+          .maybeSingle<{ id: string }>();
+
+        const { data: campaign } = await adminClient()
+          .from("campaigns")
+          .select("id")
+          .eq("business_id", business.id)
+          .eq("slug", parsed.data.campaignSlug)
+          .maybeSingle<{ id: string }>();
+
+        if (customer) {
+          await enqueueCommunicationJob({
+            businessId: business.id,
+            eventType: CommunicationEvents.CUSTOMER_REGISTERED,
+            dedupKey: `customer.registered:${customer.id}`,
+            payload: {
+              customerId: customer.id,
+              phone: parsed.data.phone,
+              customerName: parsed.data.name,
+              campaignId: campaign?.id ?? null,
+            },
+          });
+        }
+
+        if (result.won && !result.coupon_code) {
+          await enqueueCommunicationJob({
+            businessId: business.id,
+            eventType: CommunicationEvents.REWARD_WON,
+            dedupKey: `reward.won:${customer?.id ?? parsed.data.phone}:${parsed.data.campaignSlug}`,
+            payload: {
+              customerId: customer?.id,
+              phone: parsed.data.phone,
+              customerName: parsed.data.name,
+              campaignId: campaign?.id ?? null,
+              prizeName: "prize_name" in result ? result.prize_name : "Prize",
+            },
+          });
+        }
       }
     });
 

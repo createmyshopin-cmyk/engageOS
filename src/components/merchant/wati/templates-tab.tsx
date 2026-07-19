@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { fetchWatiConsole } from "./api";
 import { WatiLoadingPanel } from "./overview-tab";
+import { WatiError } from "./wati-alerts";
 
 interface WatiTemplate {
   id: string;
@@ -189,9 +190,9 @@ export function WatiTemplatesTab({ baseUrl }: { baseUrl: string | null }) {
         </div>
 
         {error ? (
-          <p className="mt-3 rounded-xl bg-[#FEF2F2] px-3 py-2 text-[11px] font-bold text-[#B91C1C]">
-            {error}
-          </p>
+          <div className="mt-3">
+            <WatiError onRetry={load}>{error}</WatiError>
+          </div>
         ) : !templates ? (
           <div className="mt-3">
             <WatiLoadingPanel label="Loading templates from WATI…" />
@@ -202,8 +203,8 @@ export function WatiTemplatesTab({ baseUrl }: { baseUrl: string | null }) {
             approval, then it will appear here.
           </p>
         ) : (
-          <div className="mt-3 overflow-hidden rounded-xl border border-[#E5E7EB]">
-            <table className="w-full text-left text-xs">
+          <div className="mt-3 overflow-x-auto rounded-xl border border-[#E5E7EB]">
+            <table className="w-full min-w-[480px] text-left text-xs">
               <thead className="bg-[#F8FAFC] text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">
                 <tr>
                   <th className="px-3 py-2">Name</th>

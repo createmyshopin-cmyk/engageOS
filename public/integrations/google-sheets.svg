@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Google Sheets">
+  <rect width="48" height="48" rx="12" fill="#ECFDF5"/>
+  <path fill="#0F9D58" d="M30 10H18c-1.1 0-2 .9-2 2v24c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V12c0-1.1-.9-2-2-2z"/>
+  <path fill="#fff" d="M20 18h8v2h-8zm0 4h8v2h-8zm0 4h8v2h-8zm0 4h5v2h-5z"/>
+  <path fill="#87CEAC" d="M30 10v6h6z"/>
+</svg>

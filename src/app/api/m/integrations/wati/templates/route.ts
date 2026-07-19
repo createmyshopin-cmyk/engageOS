@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { authorizeMerchantRead, authorizeMerchantWrite } from "@/lib/merchant-route-auth";
 import { WatiApiError } from "@/lib/wati/client";
 import { getWatiForBusiness } from "@/lib/wati/adapter";
 
@@ -7,10 +7,9 @@ export const runtime = "nodejs";
 
 /** List the tenant's WATI templates so the settings UI can offer a picker. */
 export async function GET(): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await authorizeMerchantRead();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   try {
     const tenant = await getWatiForBusiness(repo.businessId);

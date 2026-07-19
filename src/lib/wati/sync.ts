@@ -449,3 +449,99 @@ async function deliverWatiParticipation(args: {
     return "failed";
   }
 }
+
+type PendingCouponRow = {
+  id: string;
+  code: string;
+  prize_name: string;
+  campaign_id: string;
+  customers: {
+    id: string;
+    phone: string;
+    name: string;
+    wa_opt_out: boolean;
+  };
+};
+
+/** Drain pending coupon outbox for a tenant (optionally scoped to one campaign). */
+export async function dispatchPendingWatiCoupons(
+  businessId: string,
+  limit = 50,
+  campaignId?: string
+): Promise<{ sent: number; failed: number; error?: string }> {
+  const tenant = await getWatiForBusiness(businessId);
+  if (!tenant) {
+    return { sent: 0, failed: 0, error: "WATI is not connected" };
+  }
+
+  const { data: business, error: businessError } = await supabaseAdmin()
+    .from("businesses")
+    .select("id, name, slug, phone, city, wa_messages_sent, wa_messages_quota")
+    .eq("id", businessId)
+    .maybeSingle<BusinessRow>();
+  if (businessError) {
+    return { sent: 0, failed: 0, error: businessError.message };
+  }
+  if (!business) {
+    return { sent: 0, failed: 0, error: "Business not found" };
+  }
+
+  let query = supabaseAdmin()
+    .from("coupons")
+    .select(
+      "id, code, prize_name, campaign_id, customers!inner(id, phone, name, wa_opt_out)"
+    )
+    .eq("business_id", businessId)
+    .eq("wa_status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(limit);
+
+  if (campaignId) {
+    query = query.eq("campaign_id", campaignId);
+  }
+
+  const { data: rows, error } = await query;
+  if (error) {
+    return { sent: 0, failed: 0, error: error.message };
+  }
+
+  let sent = 0;
+  let failed = 0;
+
+  for (const raw of rows ?? []) {
+    const customer = Array.isArray(raw.customers) ? raw.customers[0] : raw.customers;
+    if (!customer) continue;
+
+    const row: PendingCouponRow = {
+      id: raw.id,
+      code: raw.code,
+      prize_name: raw.prize_name,
+      campaign_id: raw.campaign_id,
+      customers: customer,
+    };
+    const { data: campaign } = await supabaseAdmin()
+      .from("campaigns")
+      .select("id, name, ends_at")
+      .eq("business_id", businessId)
+      .eq("id", row.campaign_id)
+      .maybeSingle<{ id: string; name: string; ends_at: string }>();
+
+    const outcome = await deliverWatiCoupon({
+      tenant,
+      business,
+      campaignId: campaign?.id ?? row.campaign_id,
+      campaignName: campaign?.name ?? "Scratch & Win",
+      campaignEndsAt: campaign?.ends_at ?? null,
+      customer: row.customers,
+      phone: row.customers.phone,
+      customerName: row.customers.name,
+      prizeName: row.prize_name,
+      couponCode: row.code,
+    });
+
+    if (outcome === "sent") sent += 1;
+    else if (outcome === "failed") failed += 1;
+  }
+
+  return { sent, failed };
+}

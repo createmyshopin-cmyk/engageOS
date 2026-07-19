@@ -117,3 +117,36 @@ export function toTrafficSourceDTO(row: TrafficSourceRowLike): TrafficSourceDTO 
     redemptions: Number(row.redemptions) || 0,
   };
 }
+
+/** One day of business-wide funnel activity (business_daily_activity RPC). */
+export interface DailyActivityDTO {
+  day: string;
+  registrations: number;
+  scratches: number;
+  coupons: number;
+  redemptions: number;
+}
+
+export interface AnalyticsTrendsDTO {
+  days: number;
+  series: DailyActivityDTO[];
+}
+
+/** Row shape from TenantRepository.businessDailyActivity(). */
+export interface DailyActivityRowLike {
+  day: string;
+  registrations: number;
+  scratches: number;
+  coupons: number;
+  redemptions: number;
+}
+
+export function toDailyActivityDTO(row: DailyActivityRowLike): DailyActivityDTO {
+  return {
+    day: row.day,
+    registrations: Number(row.registrations) || 0,
+    scratches: Number(row.scratches) || 0,
+    coupons: Number(row.coupons) || 0,
+    redemptions: Number(row.redemptions) || 0,
+  };
+}

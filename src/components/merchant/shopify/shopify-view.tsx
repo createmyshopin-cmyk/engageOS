@@ -39,6 +39,10 @@ import {
   Check,
   ChevronDown,
   ShieldCheck,
+  Sparkles,
+  Hash,
+  CircleCheck,
+  Link2,
 } from "lucide-react";
 import {
   useShopifyOverview,
@@ -47,8 +51,10 @@ import {
   useConnectShopify,
   useDisconnectShopify,
   useRefreshShopifyScopes,
+  useRetryCouponDrop,
 } from "@/lib/api/hooks/use-shopify";
 import { REQUIRED_SHOPIFY_SCOPES, parseScopes, expandImpliedScopes } from "@/lib/shopify/scopes";
+import { shopifyDiscountAdminUrl } from "@/lib/shopify/storefront-url";
 import type { ShopifyCouponDropDTO } from "@/lib/api/types";
 import { ShopifySyncPanel } from "./shopify-sync-panel";
 
@@ -185,7 +191,7 @@ export function ShopifyView() {
               <ScopesCard />
 
               {/* Coupon Drop generated codes */}
-              <CouponDropsCard />
+              <CouponDropsCard shopDomain={data?.shop?.domain} />
 
               {/* Operational sync engine dashboard */}
               <ShopifySyncPanel />
@@ -305,207 +311,436 @@ function ScopesCard() {
 /* ──────────────────────────────────────────────────────────
    COUPON DROP GENERATED CODES
 ────────────────────────────────────────────────────────── */
-function CouponDropsCard() {
-  const { data, isLoading, isError, refetch } = useCouponDrops();
+function CouponDropsCard({ shopDomain }: { shopDomain?: string }) {
+  const { data, isLoading, isError, refetch, isFetching } = useCouponDrops();
   const campaigns = data?.campaigns ?? [];
 
+  const totals = campaigns.reduce(
+    (acc, c) => ({
+      issued: acc.issued + c.codes_minted,
+      inShopify: acc.inShopify + c.codes_claimed,
+      redeemed: acc.redeemed + c.codes_redeemed,
+    }),
+    { issued: 0, inShopify: 0, redeemed: 0 }
+  );
+
+  const sorted = [...campaigns].sort((a, b) => {
+    const score = (c: ShopifyCouponDropDTO) =>
+      (c.codes_minted > 0 ? 100 : 0) +
+      (c.pool_status === "ready" ? 10 : 0) +
+      (c.campaign_status === "active" ? 5 : 0);
+    return score(b) - score(a);
+  });
+
   return (
-    <section className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm p-5">
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center justify-center size-9 rounded-xl bg-rose-50 text-rose-600">
-          <Ticket className="size-4.5" />
+    <section className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm overflow-hidden">
+      <div className="p-5 pb-4 border-b border-neutral-100 bg-gradient-to-r from-rose-50/80 via-white to-white">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="flex items-center justify-center size-11 rounded-2xl bg-rose-100 text-rose-600 shrink-0">
+              <Ticket className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-base font-black text-neutral-900 tracking-tight">
+                Coupon Drop codes
+              </p>
+              <p className="text-xs font-medium text-neutral-500 mt-0.5 max-w-lg">
+                Unique Shopify discount codes minted when customers win. Track sync and redemption
+                per campaign.
+              </p>
+            </div>
+          </div>
+          {!isLoading && (
+            <button
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-bold text-neutral-600 hover:bg-neutral-50 transition cursor-pointer disabled:opacity-50 shrink-0"
+            >
+              <RefreshCw className={`size-3.5 ${isFetching ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          )}
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-black text-neutral-900">Coupon Drop codes</p>
-          <p className="text-[11px] font-semibold text-neutral-500">
-            Unique Shopify discount codes minted for your Coupon Drop campaigns.
-          </p>
-        </div>
-        {!isLoading && (
-          <button
-            onClick={() => refetch()}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-bold text-neutral-600 hover:bg-neutral-50 transition cursor-pointer"
-          >
-            <RefreshCw className="size-3.5" /> Refresh
-          </button>
+
+        {!isLoading && campaigns.length > 0 && (
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            <CouponDropSummaryTile
+              icon={Sparkles}
+              label="Codes issued"
+              value={totals.issued}
+              tone="text-violet-600 bg-violet-50"
+            />
+            <CouponDropSummaryTile
+              icon={Store}
+              label="Live in Shopify"
+              value={totals.inShopify}
+              tone="text-emerald-600 bg-emerald-50"
+            />
+            <CouponDropSummaryTile
+              icon={ShoppingBag}
+              label="Redeemed at checkout"
+              value={totals.redeemed}
+              tone="text-amber-600 bg-amber-50"
+            />
+          </div>
         )}
       </div>
 
-      {isLoading ? (
-        <div className="mt-4 space-y-2">
-          {[0, 1].map((i) => (
-            <div key={i} className="h-20 rounded-2xl bg-neutral-100 animate-pulse" />
-          ))}
-        </div>
-      ) : isError ? (
-        <p className="mt-4 text-[11px] font-bold text-red-600">
-          Couldn&apos;t load Coupon Drop data.
-        </p>
-      ) : campaigns.length === 0 ? (
-        <div className="mt-4 rounded-2xl border border-dashed border-neutral-200 py-8 text-center">
-          <p className="text-xs font-bold text-neutral-500">No Coupon Drop campaigns yet.</p>
-          <p className="text-[11px] font-semibold text-neutral-400 mt-1">
-            Create a Coupon Drop campaign to auto-generate Shopify discount codes.
-          </p>
-        </div>
-      ) : (
-        <div className="mt-4 space-y-3">
-          {campaigns.map((c) => (
-            <CouponDropRow key={c.campaign_id} campaign={c} />
-          ))}
-        </div>
-      )}
+      <div className="p-5 pt-4">
+        {isLoading ? (
+          <div className="space-y-3">
+            {[0, 1].map((i) => (
+              <div key={i} className="h-36 rounded-2xl bg-neutral-100 animate-pulse" />
+            ))}
+          </div>
+        ) : isError ? (
+          <div className="rounded-2xl border border-red-100 bg-red-50 p-4 text-center">
+            <p className="text-sm font-bold text-red-700">Couldn&apos;t load Coupon Drop data.</p>
+            <button
+              onClick={() => refetch()}
+              className="mt-2 text-xs font-bold text-red-600 underline"
+            >
+              Try again
+            </button>
+          </div>
+        ) : campaigns.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-neutral-200 py-12 text-center">
+            <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-neutral-100 text-neutral-400">
+              <Ticket className="size-6" />
+            </div>
+            <p className="mt-3 text-sm font-bold text-neutral-700">No Coupon Drop campaigns yet</p>
+            <p className="text-xs font-medium text-neutral-400 mt-1 max-w-xs mx-auto">
+              Create a Coupon Drop campaign and connect Shopify to auto-generate discount codes.
+            </p>
+            <Link
+              href="/m/campaigns/new"
+              className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-4 py-2 text-xs font-bold text-white hover:bg-neutral-800 transition"
+            >
+              Create campaign <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {sorted.map((c) => (
+              <CouponDropRow key={c.campaign_id} campaign={c} shopDomain={shopDomain} />
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
 
-const POOL_STATUS_STYLE: Record<string, { label: string; class: string }> = {
-  pending: { label: "Pending", class: "bg-neutral-100 text-neutral-600" },
-  minting: { label: "Minting…", class: "bg-blue-50 text-blue-700" },
-  ready: { label: "Ready", class: "bg-emerald-50 text-emerald-700" },
-  error: { label: "Error", class: "bg-red-50 text-red-700" },
+function CouponDropSummaryTile({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: typeof Sparkles;
+  label: string;
+  value: number;
+  tone: string;
+}) {
+  const [text, bg] = tone.split(" ");
+  return (
+    <div className="rounded-2xl border border-neutral-100 bg-white px-3 py-2.5 flex items-center gap-3">
+      <div className={`flex size-9 shrink-0 items-center justify-center rounded-xl ${bg} ${text}`}>
+        <Icon className="size-4" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-lg font-black text-neutral-900 leading-none">{value}</p>
+        <p className="text-[10px] font-semibold text-neutral-500 mt-0.5 truncate">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+const POOL_STATUS_STYLE: Record<
+  string,
+  { label: string; class: string; border: string; dot: string }
+> = {
+  pending: {
+    label: "Pending setup",
+    class: "bg-neutral-100 text-neutral-600",
+    border: "border-l-neutral-300",
+    dot: "bg-neutral-400",
+  },
+  minting: {
+    label: "Setting up…",
+    class: "bg-blue-50 text-blue-700",
+    border: "border-l-blue-400",
+    dot: "bg-blue-500",
+  },
+  ready: {
+    label: "Shopify ready",
+    class: "bg-emerald-50 text-emerald-700",
+    border: "border-l-emerald-500",
+    dot: "bg-emerald-500",
+  },
+  error: {
+    label: "Needs attention",
+    class: "bg-red-50 text-red-700",
+    border: "border-l-red-400",
+    dot: "bg-red-500",
+  },
 };
 
-function CouponDropRow({ campaign }: { campaign: ShopifyCouponDropDTO }) {
+function CouponDropRow({
+  campaign,
+  shopDomain,
+}: {
+  campaign: ShopifyCouponDropDTO;
+  shopDomain?: string;
+}) {
   const [open, setOpen] = useState(false);
+  const retry = useRetryCouponDrop();
   const status = POOL_STATUS_STYLE[campaign.pool_status] ?? POOL_STATUS_STYLE.pending;
+  const pendingShopify = Math.max(0, campaign.codes_minted - campaign.codes_claimed);
+  const syncPct =
+    campaign.codes_minted > 0
+      ? Math.round((campaign.codes_claimed / campaign.codes_minted) * 100)
+      : 0;
+  const adminUrl =
+    shopDomain && campaign.shopify_parent_discount_id
+      ? shopifyDiscountAdminUrl(shopDomain, campaign.shopify_parent_discount_id)
+      : null;
+  const isQuiet = campaign.codes_minted === 0 && campaign.campaign_status === "draft";
 
   return (
-    <div className="rounded-2xl border border-neutral-200 p-3.5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-black text-neutral-900 truncate">{campaign.campaign_name}</p>
-          <div className="mt-1 flex items-center gap-2">
-            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${status.class}`}>
-              {status.label}
-            </span>
-            <span className="text-[10px] font-semibold text-neutral-400 capitalize">
-              {campaign.campaign_status}
-            </span>
+    <article
+      className={`rounded-2xl border border-neutral-200/90 bg-white overflow-hidden border-l-4 ${status.border} ${
+        isQuiet ? "opacity-75" : ""
+      }`}
+    >
+      <div className="p-4 sm:p-5">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href={`/m/campaigns/${campaign.campaign_id}`}
+                className="text-sm font-black text-neutral-900 hover:text-emerald-700 transition line-clamp-2"
+              >
+                {campaign.campaign_name}
+              </Link>
+              {campaign.campaign_slug && (
+                <span className="inline-flex items-center gap-0.5 rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-bold text-neutral-500">
+                  <Hash className="size-2.5" />
+                  {campaign.campaign_slug}
+                </span>
+              )}
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${status.class}`}
+              >
+                <span className={`size-1.5 rounded-full ${status.dot}`} />
+                {status.label}
+              </span>
+              <span className="text-[10px] font-semibold text-neutral-400 capitalize">
+                Campaign {campaign.campaign_status}
+              </span>
+              {campaign.pool_status === "error" && (
+                <button
+                  onClick={() => retry.mutate({ campaignId: campaign.campaign_id })}
+                  disabled={retry.isPending}
+                  className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-50 transition"
+                >
+                  {retry.isPending ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-3" />
+                  )}
+                  Retry setup
+                </button>
+              )}
+            </div>
           </div>
+
+          {campaign.codes_minted > 0 && (
+            <button
+              onClick={() => setOpen((v) => !v)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-bold text-neutral-700 hover:bg-neutral-100 transition cursor-pointer shrink-0 w-full sm:w-auto"
+            >
+              {open ? "Hide codes" : "View sample codes"}
+              <ChevronDown className={`size-4 transition ${open ? "rotate-180" : ""}`} />
+            </button>
+          )}
         </div>
+
+        {campaign.pool_status === "error" && campaign.pool_last_error && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-100 bg-red-50/80 px-3 py-2.5">
+            <AlertTriangle className="size-4 shrink-0 text-red-500 mt-0.5" />
+            <p className="text-xs font-medium text-red-700 leading-relaxed">
+              {campaign.pool_last_error}
+            </p>
+          </div>
+        )}
+
         {campaign.codes_minted > 0 && (
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-bold text-neutral-600 hover:bg-neutral-50 transition cursor-pointer shrink-0"
-          >
-            Sample codes
-            <ChevronDown className={`size-3.5 transition ${open ? "rotate-180" : ""}`} />
-          </button>
+          <div className="mt-4">
+            <div className="flex items-center justify-between text-[10px] font-semibold text-neutral-500 mb-1.5">
+              <span>Shopify sync</span>
+              <span className={syncPct === 100 ? "text-emerald-600" : "text-amber-600"}>
+                {campaign.codes_claimed} of {campaign.codes_minted} linked ({syncPct}%)
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-neutral-100 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  syncPct === 100 ? "bg-emerald-500" : syncPct > 0 ? "bg-amber-400" : "bg-neutral-300"
+                }`}
+                style={{ width: `${syncPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <PoolStat icon={Sparkles} label="Issued" value={campaign.codes_minted} />
+          <PoolStat icon={CircleCheck} label="Valid now" value={campaign.codes_available} />
+          <PoolStat icon={Store} label="In Shopify" value={campaign.codes_claimed} tone="emerald" />
+          <PoolStat
+            icon={ShoppingBag}
+            label="Redeemed"
+            value={campaign.codes_redeemed}
+            tone="amber"
+            highlight
+          />
+        </div>
+
+        {pendingShopify > 0 && (
+          <p className="mt-3 flex items-center gap-1.5 text-xs font-medium text-amber-800 bg-amber-50 rounded-xl px-3 py-2">
+            <Loader2 className="size-3.5 shrink-0" />
+            {pendingShopify} code{pendingShopify === 1 ? "" : "s"} syncing to Shopify — automatic retry
+            runs in the background.
+          </p>
+        )}
+
+        {adminUrl && (
+          <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl bg-neutral-50 border border-neutral-100 p-3">
+            <div className="flex items-start gap-2 min-w-0 flex-1">
+              <Link2 className="size-4 shrink-0 text-neutral-400 mt-0.5" />
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                Codes appear under{" "}
+                <strong className="text-neutral-800">{campaign.campaign_name}</strong> in Shopify
+                Admin → Discounts → <strong>Codes</strong> tab.
+              </p>
+            </div>
+            <a
+              href={adminUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition shrink-0"
+            >
+              Open in Shopify <ExternalLink className="size-3.5" />
+            </a>
+          </div>
         )}
       </div>
 
-      {campaign.pool_status === "error" && campaign.pool_last_error && (
-        <p className="mt-2 flex items-start gap-1.5 text-[10px] font-bold text-red-600">
-          <AlertTriangle className="size-3.5 shrink-0 mt-px" />
-          {campaign.pool_last_error}
-        </p>
-      )}
-
-      <div className="mt-3 grid grid-cols-4 gap-2">
-        <PoolStat label="Minted" value={campaign.codes_minted} />
-        <PoolStat label="Available" value={campaign.codes_available} />
-        <PoolStat label="Claimed" value={campaign.codes_claimed} />
-        <PoolStat label="Redeemed" value={campaign.codes_redeemed} highlight />
-      </div>
-
-      {campaign.shopify_parent_discount_id && (
-        <div className="mt-3 flex items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-wide text-neutral-400">
-            Parent discount
-          </span>
-          <CopyableId value={campaign.shopify_parent_discount_id} />
-        </div>
-      )}
-
       {open && (
-        <div className="mt-3 border-t border-neutral-100 pt-3">
+        <div className="border-t border-neutral-100 bg-neutral-50/50 px-4 sm:px-5 py-4">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-neutral-400 mb-2">
+            Recent codes
+          </p>
           {campaign.sample_codes.length === 0 ? (
-            <p className="text-[11px] font-semibold text-neutral-400">No codes to show.</p>
+            <p className="text-xs font-medium text-neutral-400">No codes issued yet.</p>
           ) : (
-            <div className="space-y-1.5">
+            <ul className="space-y-2">
               {campaign.sample_codes.map((s) => (
-                <div
-                  key={s.code}
-                  className="flex items-center gap-2 rounded-lg bg-neutral-50 px-2.5 py-1.5"
-                >
-                  <code className="text-[11px] font-black text-neutral-800">{s.code}</code>
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
-                      s.status === "available"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : s.status === "claimed"
-                          ? "bg-amber-100 text-amber-700"
-                          : "bg-neutral-200 text-neutral-600"
-                    }`}
-                  >
-                    {s.status}
-                  </span>
-                  {s.shopify_redeem_code_id && (
-                    <span className="ml-auto truncate text-[10px] font-semibold text-neutral-400">
-                      {s.shopify_redeem_code_id}
-                    </span>
-                  )}
-                </div>
+                <SampleCodeRow key={s.code} code={s.code} status={s.status} linked={!!s.shopify_redeem_code_id} />
               ))}
-            </div>
+            </ul>
           )}
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
-function PoolStat({
-  label,
-  value,
-  highlight = false,
+function SampleCodeRow({
+  code,
+  status,
+  linked,
 }: {
-  label: string;
-  value: number;
-  highlight?: boolean;
+  code: string;
+  status: string;
+  linked: boolean;
 }) {
-  return (
-    <div className="rounded-xl bg-neutral-50 p-2">
-      <p className="text-[9px] font-bold uppercase tracking-wide text-neutral-400">{label}</p>
-      <p className={`text-sm font-black ${highlight ? "text-emerald-600" : "text-neutral-900"}`}>
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function CopyableId({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
+
   function copy() {
     if (typeof navigator === "undefined") return;
     navigator.clipboard
-      .writeText(value)
+      .writeText(code)
       .then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
       })
       .catch(() => {});
   }
+
+  const statusStyle =
+    status === "redeemed"
+      ? "bg-amber-100 text-amber-800"
+      : linked
+        ? "bg-emerald-100 text-emerald-800"
+        : "bg-neutral-200 text-neutral-600";
+
   return (
-    <button
-      onClick={copy}
-      title={value}
-      className="inline-flex items-center gap-1.5 rounded-md bg-neutral-100 px-2 py-1 text-[10px] font-bold text-neutral-600 hover:bg-neutral-200 transition cursor-pointer max-w-full"
-    >
-      <span className="truncate">{value}</span>
-      {copied ? (
-        <Check className="size-3 shrink-0 text-emerald-600" />
-      ) : (
-        <Copy className="size-3 shrink-0" />
-      )}
-    </button>
+    <li className="flex items-center gap-2 rounded-xl border border-neutral-200/80 bg-white px-3 py-2.5">
+      <code className="text-sm font-black tracking-wide text-neutral-900 flex-1 truncate">{code}</code>
+      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${statusStyle}`}>
+        {linked ? status : "pending sync"}
+      </span>
+      <button
+        onClick={copy}
+        title="Copy code"
+        className="shrink-0 flex size-8 items-center justify-center rounded-lg border border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:text-neutral-800 transition"
+      >
+        {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+      </button>
+    </li>
+  );
+}
+
+function PoolStat({
+  icon: Icon,
+  label,
+  value,
+  highlight = false,
+  tone = "neutral",
+}: {
+  icon: typeof Sparkles;
+  label: string;
+  value: number;
+  highlight?: boolean;
+  tone?: "neutral" | "emerald" | "amber";
+}) {
+  const valueColor =
+    highlight || tone === "emerald"
+      ? "text-emerald-600"
+      : tone === "amber" && value > 0
+        ? "text-amber-600"
+        : "text-neutral-900";
+
+  return (
+    <div className="rounded-xl border border-neutral-100 bg-neutral-50/80 p-3">
+      <div className="flex items-center gap-1.5 text-neutral-400">
+        <Icon className="size-3.5" />
+        <p className="text-[10px] font-semibold">{label}</p>
+      </div>
+      <p className={`text-xl font-black mt-1 tracking-tight ${valueColor}`}>{value}</p>
+    </div>
   );
 }
 
 function ConnectForm() {
   const connect = useConnectShopify();
-  const [shopDomain, setShopDomain] = useState("");  const [clientId, setClientId] = useState("");
+  const [shopDomain, setShopDomain] = useState("");
+  const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
 
   const canSubmit =

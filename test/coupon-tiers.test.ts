@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resolveTiers,
+  buildParentDiscountTitle,
   type RawCouponPrize,
 } from "@/lib/shopify/coupon-drop-orchestrator";
 
@@ -97,5 +98,24 @@ describe("resolveTiers", () => {
     );
     expect(tiers[0].discount_type).toBe("fixed_amount");
     expect(tiers[0].discount_value).toBe(100);
+  });
+});
+
+describe("buildParentDiscountTitle", () => {
+  it("uses the campaign headline alone for a single tier", () => {
+    expect(buildParentDiscountTitle("Scratch & Win this Onam! 🎁", "5% OFF Coupon", 1)).toBe(
+      "Scratch & Win this Onam! 🎁"
+    );
+  });
+
+  it("appends the tier name when multiple tiers share one campaign", () => {
+    expect(
+      buildParentDiscountTitle("Scratch & Win this Onam! 🎁", "10% OFF Coupon", 2)
+    ).toBe("Scratch & Win this Onam! 🎁 — 10% OFF Coupon");
+  });
+
+  it("truncates very long titles for Shopify Admin", () => {
+    const long = "A".repeat(130);
+    expect(buildParentDiscountTitle(long, "Tier", 2).length).toBeLessThanOrEqual(120);
   });
 });

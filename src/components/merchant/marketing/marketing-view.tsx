@@ -100,7 +100,7 @@ export function MarketingView() {
             </span>
           )}
           <Link
-            href="/m/whatsapp"
+            href="/m/wati"
             className="inline-flex items-center gap-1.5 bg-neutral-900 text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-neutral-800 transition"
           >
             <MessageCircle className="size-3.5" /> New broadcast
@@ -220,10 +220,10 @@ function EmptyState() {
         with live delivery stats.
       </p>
       <Link
-        href="/m/whatsapp"
+        href="/m/wati"
         className="mt-5 inline-flex items-center gap-1.5 bg-neutral-900 text-white text-xs font-bold px-4 py-2.5 rounded-xl hover:bg-neutral-800 transition"
       >
-        Go to WhatsApp <ArrowUpRight className="size-3.5" />
+        Go to WATI <ArrowUpRight className="size-3.5" />
       </Link>
     </div>
   );

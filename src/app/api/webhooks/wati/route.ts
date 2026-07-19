@@ -23,13 +23,20 @@ export const runtime = "nodejs";
 // coupon/receipt writes headroom beyond the platform default.
 export const maxDuration = 60;
 
-/** Accept the token from the query string (primary) or a bearer header. */
+/** Accept the token from Authorization header (production) or query (dev only). */
 function readToken(request: NextRequest): string | null {
-  const q = request.nextUrl.searchParams.get("token")
-    ?? request.nextUrl.searchParams.get("secret");
-  if (q && q.trim()) return q.trim();
   const auth = request.headers.get("authorization");
-  if (auth?.toLowerCase().startsWith("bearer ")) return auth.slice(7).trim() || null;
+  if (auth?.toLowerCase().startsWith("bearer ")) {
+    const token = auth.slice(7).trim();
+    if (token) return token;
+  }
+  // Query-string tokens leak via proxy/CDN logs — dev/non-production only.
+  if (process.env.NODE_ENV !== "production") {
+    const q =
+      request.nextUrl.searchParams.get("token") ??
+      request.nextUrl.searchParams.get("secret");
+    if (q?.trim()) return q.trim();
+  }
   return null;
 }
 

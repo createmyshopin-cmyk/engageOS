@@ -3,6 +3,7 @@ import ReactDOM from "react-dom";
 import { headers } from "next/headers";
 import { getCampaignDisplay, getCampaignTracking, recordScan } from "@/lib/db/rpc";
 import { clientIpFromHeaders } from "@/lib/ip";
+import { guardPlayPageView } from "@/lib/play/abuse-guard";
 import { normalizeSource } from "@/lib/validation";
 import { PlayFlow } from "@/components/play/play-flow";
 import { BrandHeader } from "@/components/play/brand-header";
@@ -31,6 +32,21 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     return {
       title: `${display.headline} — ${display.business_name}`,
       description: `Play ${display.name} at ${display.business_name} and win instantly!`,
+      openGraph: {
+        title: `${display.headline} — ${display.business_name}`,
+        description: `Play ${display.name} at ${display.business_name} and win instantly!`,
+        images: display.og_image_url || display.banner_url
+          ? [{ url: display.og_image_url || display.banner_url!, width: 1200, height: 630 }]
+          : undefined,
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: `${display.headline} — ${display.business_name}`,
+        description: `Play ${display.name} at ${display.business_name} and win instantly!`,
+        images: display.og_image_url || display.banner_url
+          ? [display.og_image_url || display.banner_url!]
+          : undefined,
+      },
     };
   } catch {
     return { title: "Scratch & Win" };
@@ -62,7 +78,9 @@ export default async function PlayPage({ params, searchParams }: PageProps) {
   // optional ?src= traffic source is tagged onto the scan event.
   if (display) {
     const ip = clientIpFromHeaders(await headers());
-    await recordScan(merchantSlug, campaignSlug, ip, source);
+    if (await guardPlayPageView(ip)) {
+      await recordScan(merchantSlug, campaignSlug, ip, source);
+    }
   }
 
   if (loadFailed) {

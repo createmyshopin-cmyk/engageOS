@@ -4,8 +4,11 @@ import { getShopifyForBusiness, refreshShopifyScopes } from "@/lib/shopify/adapt
 import {
   bulkAddCodes,
   createParentDiscount,
+  updateParentDiscountTitle,
   generatePoolCodes,
+  normalizeCouponCode,
   pollBulkCreation,
+  verifyDiscountCodeInShopify,
   ShopifyDiscountError,
   type DiscountConfig,
 } from "@/lib/shopify/discounts";
@@ -136,6 +139,28 @@ export function resolveTiers(
     .filter((t): t is CouponTier => t !== null);
 }
 
+/** Customer-facing campaign title for Shopify Admin discount names. */
+export function buildParentDiscountTitle(
+  campaignTitle: string,
+  tierName: string,
+  tierCount: number
+): string {
+  const base = campaignTitle.trim() || "EngageOS Campaign";
+  const full = tierCount > 1 ? `${base} — ${tierName.trim()}` : base;
+  return full.length > 120 ? `${full.slice(0, 117)}...` : full;
+}
+
+async function loadCampaignTitle(campaignId: string): Promise<string> {
+  const { data, error } = await adminClient()
+    .from("campaigns")
+    .select("name, headline")
+    .eq("id", campaignId)
+    .maybeSingle();
+  if (error) throw new Error(`loadCampaignTitle failed: ${error.message}`);
+  const row = data as { name: string; headline: string | null } | null;
+  return row?.headline?.trim() || row?.name?.trim() || "EngageOS Campaign";
+}
+
 /**
  * The campaign's coupon prize tiers, each an independent Shopify discount. See
  * {@link resolveTiers} for the resolution rules.
@@ -212,8 +237,9 @@ export async function mintCouponForWin(params: {
   couponId: string;
   code: string;
   parentGid: string | null;
-}): Promise<{ linked: boolean }> {
-  const { businessId, campaignId, prizeId, couponId, code } = params;
+}): Promise<{ linked: boolean; confirmedCode?: string }> {
+  const { businessId, campaignId, prizeId, couponId } = params;
+  const requestedCode = normalizeCouponCode(params.code);
   const log = createLogger(newCorrelationId(), {
     route: "coupon-drop.mint-win",
     businessId,
@@ -222,28 +248,43 @@ export async function mintCouponForWin(params: {
   try {
     const shopify = await getShopifyForBusiness(businessId);
     if (!shopify) return { linked: false };
+
     if (!hasWriteDiscounts(shopify.shop.scopes)) {
       const check = await ensureWriteDiscounts(businessId, shopify.shop.scopes);
       if (!check.ok) return { linked: false };
     }
 
-    // Resolve the tier's parent discount, creating it on the fly if activation
-    // never ran (so later wins on this tier reuse it).
     let parentGid = params.parentGid;
     if (!parentGid) {
       const cfg = await loadConfig(businessId, campaignId);
       if (!cfg) return { linked: false };
-      const tier = (await loadTiers(campaignId, cfg)).find((t) => t.prize_id === prizeId);
+      const tiers = await loadTiers(campaignId, cfg);
+      const tier = tiers.find((t) => t.prize_id === prizeId);
       if (!tier) return { linked: false };
-      parentGid = await ensureTierParent(businessId, campaignId, cfg, tier, shopify.client);
+      const campaignTitle = await loadCampaignTitle(campaignId);
+      parentGid = await ensureTierParent(
+        businessId,
+        campaignId,
+        cfg,
+        tier,
+        shopify.client,
+        { campaignTitle, tierCount: tiers.length }
+      );
     }
 
-    const bulkId = await bulkAddCodes(shopify.client, parentGid, [code]);
+    const bulkId = await bulkAddCodes(shopify.client, parentGid, [requestedCode]);
     if (!bulkId) return { linked: false };
+
     const result = await pollBulkCreation(shopify.client, bulkId);
-    const confirmed = result.codes.find((c) => c.code === code) ?? result.codes[0];
-    if (!confirmed) {
-      log.warn("coupon_drop.mint_win_unconfirmed", { couponId, code });
+    const confirmed = result.codes.find((c) => c.code === requestedCode);
+    if (!confirmed?.redeemId) {
+      log.warn("coupon_drop.mint_win_unconfirmed", {
+        couponId,
+        requestedCode,
+        shopifyCodes: result.codes.map((c) => c.code),
+        failedCount: result.failedCount,
+        done: result.done,
+      });
       return { linked: false };
     }
 
@@ -252,10 +293,38 @@ export async function mintCouponForWin(params: {
       p_coupon_id: couponId,
       p_redeem_id: confirmed.redeemId,
       p_parent_gid: parentGid,
+      p_confirmed_code: confirmed.code,
     });
     if (error) throw new Error(`coupon_link_shopify failed: ${error.message}`);
-    log.info("coupon_drop.mint_win_ok", { couponId, prizeId });
-    return { linked: true };
+
+    const verified = await verifyDiscountCodeInShopify(
+      shopify.client,
+      shopify.shop.shop_domain,
+      confirmed.code,
+      confirmed.redeemId,
+      parentGid
+    );
+    if (!verified.found) {
+      log.warn("coupon_drop.mint_win_verify_failed", {
+        couponId,
+        code: confirmed.code,
+        redeemId: confirmed.redeemId,
+      });
+      await adminClient()
+        .from("coupons")
+        .update({ needs_reconciliation: true, source: "internal_fallback" })
+        .eq("id", couponId)
+        .eq("business_id", businessId);
+      return { linked: false };
+    }
+
+    log.info("coupon_drop.mint_win_ok", {
+      couponId,
+      prizeId,
+      code: confirmed.code,
+      parentTitle: verified.parentTitle,
+    });
+    return { linked: true, confirmedCode: confirmed.code };
   } catch (err) {
     log.error("coupon_drop.mint_win_failed", { couponId, err: errorMessage(err) });
     return { linked: false };
@@ -271,17 +340,24 @@ async function ensureTierParent(
   campaignId: string,
   cfg: CouponConfigRow,
   tier: CouponTier,
-  client: ShopifyClient
+  client: ShopifyClient,
+  opts: { campaignTitle: string; tierCount: number }
 ): Promise<string> {
-  if (tier.shopify_parent_discount_id) return tier.shopify_parent_discount_id;
-  const pct =
-    tier.discount_type === "percentage"
-      ? `${tier.discount_value}%`
-      : `${cfg.currency ?? "INR"} ${tier.discount_value}`;
+  const title = buildParentDiscountTitle(opts.campaignTitle, tier.name, opts.tierCount);
+
+  if (tier.shopify_parent_discount_id) {
+    try {
+      await updateParentDiscountTitle(client, tier.shopify_parent_discount_id, title);
+    } catch {
+      // Best effort — an old title should not block minting new codes.
+    }
+    return tier.shopify_parent_discount_id;
+  }
+
   const placeholder = generatePoolCodes("PARENT", 1)[0];
   const parentGid = await createParentDiscount(
     client,
-    `Coupon Drop ${tier.name} (${pct}) ${campaignId.slice(0, 8)}`,
+    title,
     tierDiscountConfig(cfg, tier),
     placeholder
   );
@@ -359,12 +435,21 @@ export async function activateCouponDropPool(
 
     await setStatus(businessId, campaignId, "minting");
 
+    const campaignTitle = await loadCampaignTitle(campaignId);
+
     // Real-time model: activation only creates each tier's PARENT discount (the
     // rule). Codes are minted per-customer at play time (mintCouponForWin), each
     // carrying the campaign's custom prefix. No pool is pre-minted here.
     let firstParentGid: string | null = cfg.shopify_parent_discount_id;
     for (const tier of tiers) {
-      const parentGid = await ensureTierParent(businessId, campaignId, cfg, tier, shopify.client);
+      const parentGid = await ensureTierParent(
+        businessId,
+        campaignId,
+        cfg,
+        tier,
+        shopify.client,
+        { campaignTitle, tierCount: tiers.length }
+      );
       firstParentGid ??= parentGid;
       log.info("coupon_drop.tier_parent_ready", { prizeId: tier.prize_id, tier: tier.name });
     }
@@ -412,6 +497,192 @@ export async function topUpPoolIfLow(
  */
 export async function topUpAllCouponDropPools(): Promise<{ swept: number }> {
   return { swept: 0 };
+}
+
+interface PendingCouponRow {
+  id: string;
+  business_id: string;
+  campaign_id: string;
+  prize_id: string;
+  code: string;
+  shopify_parent_discount_id: string | null;
+}
+
+const RECONCILE_BATCH = 25;
+
+/**
+ * Retry Shopify minting for coupons that still need reconciliation after the
+ * play route's first attempt. Runs on the cron tick — bounded, best-effort.
+ */
+export async function reconcilePendingCoupons(
+  businessId?: string
+): Promise<{ attempted: number; linked: number }> {
+  const log = createLogger(newCorrelationId(), {
+    route: "coupon-drop.reconcile",
+    businessId: businessId ?? "all",
+  });
+
+  let campaignQuery = adminClient()
+    .from("campaigns")
+    .select("id")
+    .eq("campaign_type", "coupon_drop");
+  if (businessId) {
+    campaignQuery = campaignQuery.eq("business_id", businessId);
+  }
+  const { data: campaigns, error: cErr } = await campaignQuery;
+  if (cErr) {
+    log.error("coupon_drop.reconcile_campaigns_failed", { err: cErr.message });
+    return { attempted: 0, linked: 0 };
+  }
+
+  const campaignIds = (campaigns ?? []).map((c) => (c as { id: string }).id);
+  if (campaignIds.length === 0) return { attempted: 0, linked: 0 };
+
+  let couponQuery = adminClient()
+    .from("coupons")
+    .select(
+      "id,business_id,campaign_id,prize_id,code,shopify_parent_discount_id"
+    )
+    .eq("needs_reconciliation", true)
+    .in("campaign_id", campaignIds)
+    .order("created_at", { ascending: true })
+    .limit(RECONCILE_BATCH);
+  if (businessId) {
+    couponQuery = couponQuery.eq("business_id", businessId);
+  }
+
+  const { data, error } = await couponQuery;
+  if (error) {
+    log.error("coupon_drop.reconcile_load_failed", { err: error.message });
+    return { attempted: 0, linked: 0 };
+  }
+
+  const rows = (data ?? []) as PendingCouponRow[];
+  let linked = 0;
+  for (const row of rows) {
+    const result = await mintCouponForWin({
+      businessId: row.business_id,
+      campaignId: row.campaign_id,
+      prizeId: row.prize_id,
+      couponId: row.id,
+      code: row.code,
+      parentGid: row.shopify_parent_discount_id,
+    });
+    if (result.linked) linked += 1;
+  }
+
+  if (rows.length > 0) {
+    log.info("coupon_drop.reconcile_done", { attempted: rows.length, linked });
+  }
+  return { attempted: rows.length, linked };
+}
+
+const MINT_MAX_ATTEMPTS = 3;
+const MINT_RETRY_DELAY_MS = 1500;
+
+type WonPlay = {
+  status: "ok";
+  won: true;
+  campaign_id?: string;
+  prize_id?: string;
+  coupon_id?: string;
+  coupon_code?: string;
+  shopify_parent_discount_id?: string | null;
+  coupon_source?: string;
+  redeem_online?: boolean;
+  store_url?: string;
+  discount_summary?: string;
+  shopify_admin_url?: string;
+  shopify_discount_title?: string;
+};
+
+/**
+ * Mint the won coupon in Shopify BEFORE the customer sees it, with retries.
+ * Ensures coupons.code in EngageOS matches the live Shopify redeem code.
+ */
+export async function finalizeCouponDropPlay<T extends WonPlay>(result: T): Promise<T> {
+  if (
+    !result.campaign_id ||
+    !result.prize_id ||
+    !result.coupon_id ||
+    !result.coupon_code
+  ) {
+    return result;
+  }
+
+  const { data: cfg } = await adminClient()
+    .from("campaign_coupon_configs")
+    .select("business_id")
+    .eq("campaign_id", result.campaign_id)
+    .maybeSingle();
+  const businessId = (cfg as { business_id: string } | null)?.business_id;
+  if (!businessId) return result;
+
+  let linked = false;
+  let confirmedCode = normalizeCouponCode(result.coupon_code);
+
+  for (let attempt = 0; attempt < MINT_MAX_ATTEMPTS && !linked; attempt++) {
+    const mint = await mintCouponForWin({
+      businessId,
+      campaignId: result.campaign_id,
+      prizeId: result.prize_id,
+      couponId: result.coupon_id,
+      code: confirmedCode,
+      parentGid: result.shopify_parent_discount_id ?? null,
+    });
+    linked = mint.linked;
+    if (mint.confirmedCode) confirmedCode = mint.confirmedCode;
+    if (!linked && attempt < MINT_MAX_ATTEMPTS - 1) {
+      await new Promise((r) => setTimeout(r, MINT_RETRY_DELAY_MS));
+    }
+  }
+
+  const { data: coupon } = await adminClient()
+    .from("coupons")
+    .select("code, source, shopify_discount_code_id, shopify_parent_discount_id")
+    .eq("id", result.coupon_id)
+    .maybeSingle<{
+      code: string;
+      source: string;
+      shopify_discount_code_id: string | null;
+      shopify_parent_discount_id: string | null;
+    }>();
+
+  if (!coupon) return { ...result, coupon_code: confirmedCode };
+
+  const shopifyLinked =
+    coupon.source === "shopify_realtime" && !!coupon.shopify_discount_code_id;
+
+  let shopifyAdminUrl: string | undefined;
+  let shopifyDiscountTitle: string | undefined;
+
+  if (shopifyLinked && businessId) {
+    const shopify = await getShopifyForBusiness(businessId);
+    if (shopify) {
+      const verified = await verifyDiscountCodeInShopify(
+        shopify.client,
+        shopify.shop.shop_domain,
+        coupon.code,
+        coupon.shopify_discount_code_id,
+        coupon.shopify_parent_discount_id
+      );
+      if (verified.found) {
+        shopifyAdminUrl = verified.adminUrl;
+        shopifyDiscountTitle = verified.parentTitle;
+      }
+    }
+  }
+
+  return {
+    ...result,
+    coupon_code: coupon.code,
+    coupon_source: coupon.source as T["coupon_source"],
+    redeem_online: shopifyLinked,
+    store_url: shopifyLinked ? result.store_url : undefined,
+    discount_summary: shopifyLinked ? result.discount_summary : undefined,
+    shopify_admin_url: shopifyAdminUrl,
+    shopify_discount_title: shopifyDiscountTitle,
+  };
 }
 
 /**

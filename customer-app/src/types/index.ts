@@ -91,8 +91,13 @@ export type PlayResult =
       prize_background_color: string | null;
       coupon_code: string | null;
       expires_at: string | null;
+      redeem_online?: boolean;
+      discount_summary?: string;
+      store_url?: string;
+      coupon_source?: "internal" | "shopify_pool" | "internal_fallback" | "shopify_realtime";
+      defer_scratch_event?: boolean;
     }
-  | { status: "ok"; won: false }
+  | { status: "ok"; won: false; defer_scratch_event?: boolean }
   | { status: "already_played" }
   | { status: "campaign_inactive" }
   | { status: "campaign_full" }
@@ -103,6 +108,7 @@ export type BlockedStatus = Exclude<PlayResult["status"], "ok">;
 export type ExperienceEventType =
   | "reward.viewed"
   | "reward.claimed"
+  | "scratch.completed"
   | "redirect.started"
   | "redirect.opened"
   | "redirect.completed"
@@ -113,12 +119,14 @@ export interface PlayRequest {
   campaignSlug: string;
   name: string;
   phone: string;
+  whatsappConsent: boolean;
   source?: string;
+  deviceId: string;
 }
 
 export interface PlayApiResponse {
   ok: boolean;
   result?: PlayResult;
   error?: string;
-  fields?: { name?: string; phone?: string };
+  fields?: { name?: string; phone?: string; whatsappConsent?: string };
 }

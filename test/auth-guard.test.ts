@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { NextRequest } from "next/server";
 
 // Control what the cookie session resolver sees.
 const { getMerchantSession } = vi.hoisted(() => ({ getMerchantSession: vi.fn() }));
@@ -7,7 +8,9 @@ vi.mock("@/lib/merchant-session", () => ({ getMerchantSession }));
 import { authenticate, requireScope, requireRole } from "@/server/auth/guard";
 import { UnauthorizedError, ForbiddenError } from "@/server/core/errors";
 
-const fakeReq = {} as any;
+function fakeReq(): NextRequest {
+  return { headers: { get: () => null } } as unknown as NextRequest;
+}
 
 describe("auth guard — tenant isolation & scopes", () => {
   beforeEach(() => getMerchantSession.mockReset());

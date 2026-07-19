@@ -1,7 +1,10 @@
 import "server-only";
 import { Service } from "@/server/core/Service";
 import { NotFoundError } from "@/server/core/errors";
-import { buildPage, type Cursor } from "@/server/http/pagination";
+import { buildPage, decodeCursor, type Cursor } from "@/server/http/pagination";
+import { buildCustomersCsv } from "@/server/modules/customers/csv";
+import { buildCustomersXlsx } from "@/server/modules/customers/excel";
+import type { CustomerExportFormat } from "@/server/modules/customers/validator";
 import type { RequestContext } from "@/server/http/context";
 import type { TenantRepository } from "@/lib/db/tenant-repository";
 import { CustomerRepository } from "@/server/modules/customers/repository";
@@ -31,12 +34,16 @@ export class CustomerService extends Service {
     this.repo = new CustomerRepository(tenant);
   }
 
-  /** Paginated list with optional search. */
+  /** Paginated list with optional search + filters. */
   async list(opts: {
     limit: number;
     cursor: Cursor | null;
     search: string | null;
     direction: "asc" | "desc";
+    rewardFilter: string;
+    joinedDays: number | null;
+    joinedFrom: string | null;
+    joinedTo: string | null;
   }): Promise<{ items: CustomerListItemDTO[]; page: PageInfo }> {
     const rows = await this.repo.list(opts);
     const { items, page } = buildPage(rows, opts.limit, (r) => ({
@@ -44,6 +51,71 @@ export class CustomerService extends Service {
       id: r.id,
     } satisfies Cursor));
     return { items: items.map(toListItemDTO), page };
+  }
+
+  /** Export all matching campaign customers as CSV or Excel (capped). */
+  async exportCustomers(
+    opts: {
+      search: string | null;
+      rewardFilter: string;
+      joinedDays: number | null;
+      joinedFrom: string | null;
+      joinedTo: string | null;
+    },
+    format: CustomerExportFormat = "csv"
+  ): Promise<{
+    body: string | Buffer;
+    filename: string;
+    rowCount: number;
+    format: CustomerExportFormat;
+    contentType: string;
+  }> {
+    const limit = 100;
+    const maxRows = 10_000;
+    const all: CustomerListItemDTO[] = [];
+    let cursor: Cursor | null = null;
+
+    while (all.length < maxRows) {
+      const { items, page } = await this.list({
+        limit,
+        cursor,
+        direction: "desc",
+        ...opts,
+      });
+      all.push(...items);
+      if (!page.hasMore || !page.nextCursor) break;
+      cursor = decodeCursor(page.nextCursor);
+    }
+
+    const rows = all.map((r) => ({
+      name: r.name,
+      phone: r.phone,
+      email: r.email,
+      createdAt: r.createdAt,
+      latestCode: r.latestCode,
+      latestPrizeName: r.latestPrizeName,
+      rewardCount: r.rewardCount,
+    }));
+
+    const date = new Date().toISOString().slice(0, 10);
+    if (format === "xlsx") {
+      return {
+        body: buildCustomersXlsx(rows),
+        filename: `campaign-customers-${date}.xlsx`,
+        rowCount: all.length,
+        format,
+        contentType:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      };
+    }
+
+    return {
+      body: buildCustomersCsv(rows),
+      filename: `campaign-customers-${date}.csv`,
+      rowCount: all.length,
+      format,
+      contentType: "text/csv; charset=utf-8",
+    };
   }
 
   /** Full profile or 404. */

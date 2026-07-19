@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Advertising pixels">
+  <rect width="48" height="48" rx="12" fill="#EEF2FF"/>
+  <circle cx="14" cy="18" r="6" fill="#1877F2"/>
+  <circle cx="34" cy="18" r="6" fill="#E37400"/>
+  <circle cx="24" cy="32" r="6" fill="#111827"/>
+  <circle cx="14" cy="18" r="2.5" fill="#fff"/>
+  <path d="M31 16h6v4h-6zM32 20h4v2h-4z" fill="#fff"/>
+  <path d="M22 30h4v4h-4z" fill="#FE2C55"/>
+</svg>

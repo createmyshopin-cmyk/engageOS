@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { authorizeMerchantRead, authorizeMerchantWrite } from "@/lib/merchant-route-auth";
 import { WatiApiError } from "@/lib/wati/client";
 import { getWatiForBusiness } from "@/lib/wati/adapter";
 
@@ -26,10 +26,9 @@ const testSchema = z.object({
  * merchant can confirm the connection end-to-end before relying on it.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await authorizeMerchantWrite();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   let body: unknown;
   try {

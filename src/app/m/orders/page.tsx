@@ -13,9 +13,10 @@ export const metadata: Metadata = {
 
 /**
  * Orders page — the merchant-facing order directory over ingested commerce
- * data. The RSC shell guards the session and renders the layout; the
- * interactive list lives in the `OrdersView` client island, which fetches
- * through `/api/v1/orders` via React Query (HYBRID data-fetch). No order data
+ * data, focused on orders where customers used EngageOS campaign coupons.
+ * The RSC shell guards the session and renders the layout; the interactive
+ * list lives in the `OrdersView` client island, which fetches through
+ * `/api/v1/orders` via React Query (HYBRID data-fetch). No order data
  * is loaded server-side — filtering and infinite scroll are client-driven.
  */
 export default async function OrdersPage() {

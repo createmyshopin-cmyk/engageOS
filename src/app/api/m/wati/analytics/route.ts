@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { authorizeMerchantRead, authorizeMerchantWrite } from "@/lib/merchant-route-auth";
 import { adminClient } from "@/lib/db/rpc";
 import { getWatiForBusiness } from "@/lib/wati/adapter";
 
@@ -24,10 +24,9 @@ function num(v: unknown): number {
  * which is null when the account/plan doesn't expose it.
  */
 export async function GET(): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await authorizeMerchantRead();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   try {
     const db = adminClient();

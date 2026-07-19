@@ -1,26 +1,19 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
-import { getIntegration } from "@/lib/wacrm/store";
+import { getWacrmIntegration } from "@/lib/wacrm/store";
 import { getWatiIntegration } from "@/lib/wati/store";
 import { listBusinessTracking } from "@/lib/tracking/store";
 import { getShop } from "@/lib/shopify/store";
+import { getGoogleSheetsIntegration } from "@/lib/google-sheets/store";
+import { getZapierIntegrationPublic } from "@/lib/zapier/store";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
 import {
-  Blocks,
-  MessageSquare,
-  Mail,
-  Plug,
-  ArrowRight,
-  ShieldCheck,
-  Zap,
-  Globe,
-  Radio,
-  Radar,
-  ShoppingBag,
-  Store,
-} from "lucide-react";
+  IntegrationsView,
+  type IntegrationCardData,
+  type IntegrationSectionData,
+} from "@/components/merchant/integrations/integrations-view";
+import { INTEGRATION_LOGOS } from "@/lib/integrations/logos";
 
 export const dynamic = "force-dynamic";
 
@@ -29,19 +22,6 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-interface IntegrationCardData {
-  id: string;
-  name: string;
-  description: string;
-  icon: typeof MessageSquare;
-  iconBg: string;
-  iconColor: string;
-  status: "connected" | "disconnected" | "coming_soon";
-  href: string;
-  badgeLabel: string;
-  accountName: string | null;
-}
-
 export default async function IntegrationsPage() {
   const repo = await getTenantRepository();
   if (!repo) redirect("/m/login?from=/m/integrations");
@@ -49,17 +29,17 @@ export default async function IntegrationsPage() {
   const biz = await repo.getBusiness<{ name: string; city: string | null }>("name, city");
   if (!biz) redirect("/m/login?from=/m/integrations");
 
-  // wacrm status
+  // WACRM status
   let wacrmConnected = false;
   let wacrmAccountName: string | null = null;
   try {
-    const integration = await getIntegration(repo.businessId);
-    if (integration && integration.status !== "disconnected") {
+    const wacrm = await getWacrmIntegration(repo.businessId);
+    if (wacrm && wacrm.status !== "disconnected") {
       wacrmConnected = true;
-      wacrmAccountName = integration.account_name ?? "WhatsApp Business Line";
+      wacrmAccountName = wacrm.account_name ?? "WhatsApp CRM";
     }
   } catch (err) {
-    console.error("Failed to load integrations status:", err);
+    console.error("Failed to load WACRM status:", err);
   }
 
   // WATI status
@@ -97,257 +77,183 @@ export default async function IntegrationsPage() {
     console.error("Failed to load Shopify status:", err);
   }
 
-  const marketing: IntegrationCardData[] = [
-    {
-      id: "tracking",
-      name: "Advertising Pixels & Tags",
-      description:
-        "Fire the full customer journey to Meta, GA4, Google Tag Manager, TikTok, Clarity, Microsoft Ads, LinkedIn and Pinterest for retargeting and ROI measurement.",
-      icon: Radar,
-      iconBg: "bg-[#EEF2FF]",
-      iconColor: "text-[#4F46E5]",
-      status: trackingConnected > 0 ? "connected" : "disconnected",
-      href: "/m/integrations/tracking",
-      badgeLabel:
-        trackingConnected > 0
-          ? `${trackingConnected} Connected`
-          : "8 Providers",
-      accountName:
-        trackingConnected > 0
-          ? `${trackingConnected} provider${trackingConnected > 1 ? "s" : ""} live`
-          : null,
-    },
-  ];
+  // Google Sheets status
+  let sheetsConnected = false;
+  let sheetsAccountName: string | null = null;
+  try {
+    const sheets = await getGoogleSheetsIntegration(repo.businessId);
+    if (sheets && sheets.status === "connected") {
+      sheetsConnected = true;
+      sheetsAccountName = sheets.spreadsheet_url ?? sheets.api_key_prefix;
+    }
+  } catch (err) {
+    console.error("Failed to load Google Sheets status:", err);
+  }
 
-  const communication: IntegrationCardData[] = [
-    {
-      id: "wacrm",
-      name: "WhatsApp CRM (Meta Cloud API)",
-      description:
-        "Send automated coupon notifications, scratch-to-win reminders, and support chats directly via Meta Cloud API.",
-      icon: MessageSquare,
-      iconBg: "bg-[#DCFCE7]",
-      iconColor: "text-[#16A34A]",
-      status: wacrmConnected ? "connected" : "disconnected",
-      href: "/m/whatsapp",
-      badgeLabel: wacrmConnected ? "Connected" : "Available",
-      accountName: wacrmAccountName,
-    },
-    {
-      id: "wati",
-      name: "WATI WhatsApp",
-      description:
-        "Connect your official WATI WhatsApp business gateway (API v3) for automated scratch card and coupon distributions.",
-      icon: Zap,
-      iconBg: "bg-[#EFF6FF]",
-      iconColor: "text-[#3B82F6]",
-      status: watiConnected ? "connected" : "disconnected",
-      href: "/m/integrations/wati",
-      badgeLabel: watiConnected ? "Connected" : "Available",
-      accountName: watiAccountName,
-    },
-    {
-      id: "twilio",
-      name: "Twilio SMS",
-      description:
-        "Fallback to traditional SMS notifications for customers without WhatsApp when they win prizes.",
-      icon: Radio,
-      iconBg: "bg-[#FEF2F2]",
-      iconColor: "text-[#EF4444]",
-      status: "coming_soon",
-      href: "#",
-      badgeLabel: "Coming Soon",
-      accountName: null,
-    },
-    {
-      id: "mailchimp",
-      name: "Mailchimp",
-      description:
-        "Sync your scratch card participants and coupon winners instantly with your Mailchimp subscriber lists.",
-      icon: Mail,
-      iconBg: "bg-[#FFFBEB]",
-      iconColor: "text-[#D97706]",
-      status: "coming_soon",
-      href: "#",
-      badgeLabel: "Coming Soon",
-      accountName: null,
-    },
-    {
-      id: "webhooks",
-      name: "Custom Webhooks",
-      description:
-        "Send real-time webhook payloads to your external endpoints when customers scratch or redeem coupons.",
-      icon: Globe,
-      iconBg: "bg-[#F3E8FF]",
-      iconColor: "text-[#A855F7]",
-      status: "coming_soon",
-      href: "#",
-      badgeLabel: "Enterprise Only",
-      accountName: null,
-    },
-  ];
+  // Zapier status
+  let zapierConnected = false;
+  let zapierAccountName: string | null = null;
+  try {
+    const zapier = await getZapierIntegrationPublic(repo.businessId);
+    if (zapier.status === "connected") {
+      zapierConnected = true;
+      zapierAccountName =
+        zapier.activeSubscriptions > 0
+          ? `${zapier.activeSubscriptions} active Zap${zapier.activeSubscriptions > 1 ? "s" : ""}`
+          : zapier.apiKeyPrefix ?? "API key connected";
+    }
+  } catch (err) {
+    console.error("Failed to load Zapier status:", err);
+  }
 
-  const commerce: IntegrationCardData[] = [
+  const sections: IntegrationSectionData[] = [
     {
-      id: "shopify",
-      name: "Shopify",
-      description:
-        "Sync customers, products, orders, collections, inventory and discounts from your Shopify store — with live webhooks and background sync.",
-      icon: ShoppingBag,
-      iconBg: "bg-[#ECFDF5]",
-      iconColor: "text-[#059669]",
-      status: shopifyConnected ? "connected" : "disconnected",
-      href: "/m/shopify",
-      badgeLabel: shopifyConnected ? "Connected" : "Available",
-      accountName: shopifyAccountName,
+      id: "marketing",
+      title: "Marketing Tracking",
+      subtitle: "Pipe every customer-journey event to your advertising platforms.",
+      items: [
+        {
+          id: "tracking",
+          name: "Advertising Pixels & Tags",
+          description:
+            "Fire the full customer journey to Meta, GA4, Google Tag Manager, TikTok, Clarity, Microsoft Ads, LinkedIn and Pinterest for retargeting and ROI measurement.",
+          logoSrc: INTEGRATION_LOGOS.tracking,
+          category: "marketing",
+          status: trackingConnected > 0 ? "connected" : "disconnected",
+          href: "/m/integrations/tracking",
+          badgeLabel:
+            trackingConnected > 0 ? `${trackingConnected} Connected` : "8 Providers",
+          accountName:
+            trackingConnected > 0
+              ? `${trackingConnected} provider${trackingConnected > 1 ? "s" : ""} live`
+              : null,
+        },
+      ],
     },
     {
-      id: "woocommerce",
-      name: "WooCommerce",
-      description:
-        "Connect your WooCommerce catalog to issue and validate scratch-to-win discount codes automatically.",
-      icon: Store,
-      iconBg: "bg-[#F5F3FF]",
-      iconColor: "text-[#7C3AED]",
-      status: "coming_soon",
-      href: "#",
-      badgeLabel: "Coming Soon",
-      accountName: null,
+      id: "communication",
+      title: "Communication",
+      subtitle: "Reach customers over WhatsApp, SMS and email.",
+      items: [
+        {
+          id: "wacrm",
+          name: "WhatsApp CRM (WACRM)",
+          description:
+            "Connect WACRM as your WhatsApp communication engine — inbox, broadcasts, automations, and AI powered by Meta Cloud API.",
+          logoSrc: INTEGRATION_LOGOS.wacrm,
+          logoClassName: "h-8 w-8 object-contain",
+          category: "communication",
+          status: wacrmConnected ? "connected" : "disconnected",
+          href: "/m/integrations/wacrm",
+          badgeLabel: wacrmConnected ? "Connected" : "Available",
+          accountName: wacrmAccountName,
+        },
+        {
+          id: "wati",
+          name: "WATI WhatsApp",
+          description:
+            "Connect your official WATI WhatsApp business gateway (API v3) for automated scratch card and coupon distributions.",
+          logoSrc: INTEGRATION_LOGOS.wati,
+          logoClassName: "h-6 w-auto max-w-[4.5rem] object-contain",
+          category: "communication",
+          status: watiConnected ? "connected" : "disconnected",
+          href: "/m/integrations/wati",
+          badgeLabel: watiConnected ? "Connected" : "Available",
+          accountName: watiAccountName,
+        },
+        {
+          id: "twilio",
+          name: "Twilio SMS",
+          description:
+            "Fallback to traditional SMS notifications for customers without WhatsApp when they win prizes.",
+          logoSrc: INTEGRATION_LOGOS.twilio,
+          category: "communication",
+          status: "coming_soon",
+          href: "#",
+          badgeLabel: "Coming Soon",
+          accountName: null,
+        },
+        {
+          id: "mailchimp",
+          name: "Mailchimp",
+          description:
+            "Sync your scratch card participants and coupon winners instantly with your Mailchimp subscriber lists.",
+          logoSrc: INTEGRATION_LOGOS.mailchimp,
+          category: "communication",
+          status: "coming_soon",
+          href: "#",
+          badgeLabel: "Coming Soon",
+          accountName: null,
+        },
+      ],
+    },
+    {
+      id: "reporting",
+      title: "Data & Reporting",
+      subtitle: "Export customer and coupon data to external tools.",
+      items: [
+        {
+          id: "google-sheets",
+          name: "Google Sheets",
+          description:
+            "Export campaign customers and Shopify coupon codes to a Google Sheet using our Apps Script template — syncs hourly or on demand.",
+          logoSrc: INTEGRATION_LOGOS["google-sheets"],
+          category: "reporting",
+          status: sheetsConnected ? "connected" : "disconnected",
+          href: "/m/integrations/google-sheets",
+          badgeLabel: sheetsConnected ? "Connected" : "Available",
+          accountName: sheetsAccountName,
+        },
+        {
+          id: "zapier",
+          name: "Zapier",
+          description:
+            "Connect EngageOS to 7,000+ apps — trigger Zaps when customers register, scratch, or redeem; push data to CRMs, spreadsheets, and more.",
+          logoSrc: INTEGRATION_LOGOS.zapier,
+          category: "reporting",
+          status: zapierConnected ? "connected" : "disconnected",
+          href: "/m/integrations/zapier",
+          badgeLabel: zapierConnected ? "Connected" : "Available",
+          accountName: zapierAccountName,
+        },
+      ],
+    },
+    {
+      id: "commerce",
+      title: "Commerce",
+      subtitle: "Connect your online store to issue and redeem rewards.",
+      items: [
+        {
+          id: "shopify",
+          name: "Shopify",
+          description:
+            "Sync customers, products, orders, collections, inventory and discounts from your Shopify store — with live webhooks and background sync.",
+          logoSrc: INTEGRATION_LOGOS.shopify,
+          category: "commerce",
+          status: shopifyConnected ? "connected" : "disconnected",
+          href: "/m/shopify",
+          badgeLabel: shopifyConnected ? "Connected" : "Available",
+          accountName: shopifyAccountName,
+        },
+        {
+          id: "woocommerce",
+          name: "WooCommerce",
+          description:
+            "Connect your WooCommerce catalog to issue and validate scratch-to-win discount codes automatically.",
+          logoSrc: INTEGRATION_LOGOS.woocommerce,
+          category: "commerce",
+          status: "coming_soon",
+          href: "#",
+          badgeLabel: "Coming Soon",
+          accountName: null,
+        },
+      ],
     },
   ];
 
   return (
     <MerchantShell businessName={biz.name} city={biz.city} hideHeader>
-      <div className="space-y-8">
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center size-10 rounded-2xl bg-[#F0FDF4] border border-[#DCFCE7]">
-            <Blocks className="size-5 text-[#16A34A]" />
-          </div>
-          <div>
-            <h1 className="text-lg font-black text-[#111827]">Integrations</h1>
-            <p className="text-xs text-[#6B7280] font-medium">
-              Connect your external marketing tools, CRMs, and messaging channels to EngageOS.
-            </p>
-          </div>
-        </div>
-
-        <IntegrationSection
-          title="Marketing Tracking"
-          subtitle="Pipe every customer-journey event to your advertising platforms."
-          items={marketing}
-        />
-
-        <IntegrationSection
-          title="Communication"
-          subtitle="Reach customers over WhatsApp, SMS and email."
-          items={communication}
-        />
-
-        <IntegrationSection
-          title="Commerce"
-          subtitle="Connect your online store to issue and redeem rewards."
-          items={commerce}
-        />
-      </div>
+      <IntegrationsView sections={sections} />
     </MerchantShell>
-  );
-}
-
-function IntegrationSection({
-  title,
-  subtitle,
-  items,
-}: {
-  title: string;
-  subtitle: string;
-  items: IntegrationCardData[];
-}) {
-  return (
-    <section className="space-y-4">
-      <div>
-        <h2 className="text-sm font-black uppercase tracking-wider text-[#111827]">
-          {title}
-        </h2>
-        <p className="mt-0.5 text-xs text-[#6B7280] font-medium">{subtitle}</p>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {items.map((item) => (
-          <IntegrationCard key={item.id} item={item} />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function IntegrationCard({ item }: { item: IntegrationCardData }) {
-  const Icon = item.icon;
-  const isConnected = item.status === "connected";
-  const isDisconnected = item.status === "disconnected";
-
-  return (
-    <div className="flex flex-col justify-between rounded-2xl border border-[#E5E7EB] bg-white p-5 shadow-sm hover:shadow-md transition-all duration-200">
-      <div>
-        <div className="flex items-center justify-between">
-          <div className={`flex items-center justify-center size-10 rounded-2xl ${item.iconBg}`}>
-            <Icon className={`size-5 ${item.iconColor}`} />
-          </div>
-
-          <span
-            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-              isConnected
-                ? "bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]"
-                : isDisconnected
-                  ? "bg-neutral-50 text-neutral-600 border border-neutral-200"
-                  : "bg-amber-50 text-amber-600 border border-amber-200"
-            }`}
-          >
-            {isConnected && <span className="size-1.5 rounded-full bg-[#16A34A] animate-pulse" />}
-            {item.badgeLabel}
-          </span>
-        </div>
-
-        <h3 className="mt-4 text-sm font-black text-[#111827]">{item.name}</h3>
-        <p className="mt-2 text-xs text-[#6B7280] font-medium leading-relaxed">
-          {item.description}
-        </p>
-
-        {isConnected && item.accountName && (
-          <div className="mt-3 flex items-center gap-1.5 rounded-xl bg-neutral-50 border border-neutral-100 px-3 py-2">
-            <ShieldCheck className="size-4 text-[#16A34A]" />
-            <span className="text-[10px] font-bold text-neutral-600 truncate">
-              {item.accountName}
-            </span>
-          </div>
-        )}
-      </div>
-
-      <div className="mt-5 pt-4 border-t border-[#F3F4F6]">
-        {isConnected ? (
-          <Link
-            href={item.href}
-            className="inline-flex items-center gap-1 text-xs font-bold text-[#16A34A] hover:text-[#15803D] transition-colors"
-          >
-            Configure settings
-            <ArrowRight className="size-3.5" />
-          </Link>
-        ) : isDisconnected ? (
-          <Link
-            href={item.href}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-[#16A34A] hover:bg-[#15803D] text-white text-xs font-bold px-4 py-2 transition-all shadow-sm cursor-pointer"
-          >
-            <Plug className="size-3.5" />
-            Connect
-          </Link>
-        ) : (
-          <button
-            disabled
-            className="inline-flex items-center gap-1 text-xs font-bold text-neutral-400 cursor-not-allowed"
-          >
-            Request access
-          </button>
-        )}
-      </div>
-    </div>
   );
 }

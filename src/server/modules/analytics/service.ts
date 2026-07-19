@@ -6,9 +6,11 @@ import { AnalyticsRepository } from "@/server/modules/analytics/repository";
 import {
   toAnalyticsOverviewDTO,
   toCampaignPerformanceDTO,
+  toDailyActivityDTO,
   toTrafficSourceDTO,
   type AnalyticsOverviewDTO,
   type AnalyticsPerformanceDTO,
+  type AnalyticsTrendsDTO,
 } from "@/server/modules/analytics/dto";
 
 /**
@@ -42,6 +44,16 @@ export class AnalyticsService extends Service {
     return {
       campaigns: campaigns.map(toCampaignPerformanceDTO),
       sources: sources.map(toTrafficSourceDTO),
+    };
+  }
+
+  /** Daily activity series for trend charts (clamped 1–90 days). */
+  async trends(days: number): Promise<AnalyticsTrendsDTO> {
+    const clamped = Math.max(1, Math.min(days, 90));
+    const rows = await this.repo.dailyActivity(clamped);
+    return {
+      days: clamped,
+      series: rows.map(toDailyActivityDTO),
     };
   }
 }

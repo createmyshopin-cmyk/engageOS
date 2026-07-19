@@ -4,6 +4,7 @@ import { Controller } from "@/server/core/Controller";
 import { requireScope } from "@/server/auth/guard";
 import { tenantRepositoryFor, type RequestContext } from "@/server/http/context";
 import { paginated } from "@/server/http/responses";
+import { ok } from "@/server/http/responses";
 import { decodeCursor, type Cursor } from "@/server/http/pagination";
 import { OrderService } from "@/server/modules/orders/service";
 import type { ListOrdersQuery } from "@/server/modules/orders/validator";
@@ -30,7 +31,17 @@ export class OrderController extends Controller {
       cursor,
       status: query.status ?? null,
       customerId: query.customerId ?? null,
+      couponFilter: query.couponFilter ?? "with_coupon",
     });
     return paginated(items, page, { correlationId: this.ctx.correlationId, version: this.ctx.version });
+  }
+
+  async get(orderId: string): Promise<NextResponse> {
+    requireScope(this.principal(), "read");
+    const order = await this.service.get(orderId);
+    if (!order) {
+      return ok(null, { correlationId: this.ctx.correlationId, version: this.ctx.version }, 404);
+    }
+    return ok(order, { correlationId: this.ctx.correlationId, version: this.ctx.version });
   }
 }

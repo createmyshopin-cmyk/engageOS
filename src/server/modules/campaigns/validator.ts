@@ -6,8 +6,15 @@ import { z } from "zod";
  * (created_at, id); an optional status filter narrows to one lifecycle state.
  */
 
-/** Campaign lifecycle states as stored in the DB (0001 CHECK constraint). */
-export const CAMPAIGN_STATUSES = ["draft", "active", "ended"] as const;
+/** Campaign lifecycle states as stored in the DB (0007 CHECK constraint). */
+export const CAMPAIGN_STATUSES = [
+  "draft",
+  "scheduled",
+  "active",
+  "paused",
+  "completed",
+  "archived",
+] as const;
 
 /** Query for GET /api/v1/campaigns (list). */
 export const listCampaignsQuery = z.object({

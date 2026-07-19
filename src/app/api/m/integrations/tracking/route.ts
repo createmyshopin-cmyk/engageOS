@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { authorizeMerchantRead, authorizeMerchantWrite } from "@/lib/merchant-route-auth";
 import { PROVIDER_KEYS } from "@/lib/tracking/types";
 import { isValidProviderId } from "@/lib/tracking/validation";
 import { listBusinessTracking, upsertBusinessTracking } from "@/lib/tracking/store";
@@ -18,8 +18,9 @@ const patchSchema = z.object({
 
 /** All tracking provider configs for the current tenant. */
 export async function GET(): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  const auth = await authorizeMerchantRead();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
   try {
     const rows = await listBusinessTracking(repo.businessId);
     return NextResponse.json({ ok: true, integrations: rows });
@@ -31,8 +32,9 @@ export async function GET(): Promise<NextResponse> {
 
 /** Enable/disable + set the id for ONE provider. */
 export async function PATCH(req: Request): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  const auth = await authorizeMerchantWrite();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   let body: unknown;
   try {

@@ -37,6 +37,9 @@ export interface CustomerListItemDTO {
   name: string | null;
   email: string | null;
   createdAt: string;
+  latestPrizeName: string | null;
+  latestCode: string | null;
+  rewardCount: number;
 }
 
 /** The customer-360 bundle — profile + analytics + tags + segments + timeline. */

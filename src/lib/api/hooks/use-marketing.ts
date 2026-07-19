@@ -7,7 +7,7 @@
  * components never fetch or hit the DB directly. Keyset infinite pagination over
  * the opaque cursor; tenancy is enforced server-side by the v1 auth guard (no
  * business id sent). Read-only: there is no send/launch mutation here — the send
- * composer lives under `/m/whatsapp`.
+ * composer lives under `/m/wati`.
  */
 
 import { useInfiniteQuery } from "@tanstack/react-query";

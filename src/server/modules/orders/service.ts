@@ -5,7 +5,13 @@ import type { TenantRepository } from "@/lib/db/tenant-repository";
 import type { PageInfo } from "@/server/http/responses";
 import { buildPage, type Cursor } from "@/server/http/pagination";
 import { OrderRepository } from "@/server/modules/orders/repository";
-import { toOrderListItemDTO, type OrderListItemDTO } from "@/server/modules/orders/dto";
+import {
+  toOrderDetailDTO,
+  toOrderListItemDTO,
+  type OrderDetailDTO,
+  type OrderListItemDTO,
+} from "@/server/modules/orders/dto";
+import type { OrderCouponFilter } from "@/server/modules/orders/validator";
 
 /**
  * OrderService — read-only order business logic. Fetches one keyset page and
@@ -26,6 +32,7 @@ export class OrderService extends Service {
     cursor: Cursor | null;
     status: string | null;
     customerId: string | null;
+    couponFilter: OrderCouponFilter;
   }): Promise<{ items: OrderListItemDTO[]; page: PageInfo }> {
     const rows = await this.repo.list(opts);
     const { items, page } = buildPage(rows, opts.limit, (r) => ({
@@ -33,5 +40,11 @@ export class OrderService extends Service {
       id: r.id,
     } satisfies Cursor));
     return { items: items.map(toOrderListItemDTO), page };
+  }
+
+  /** Full order detail with line items. Only returns rows in tenant scope. */
+  async get(orderId: string): Promise<OrderDetailDTO | null> {
+    const row = await this.repo.findById(orderId);
+    return row ? toOrderDetailDTO(row) : null;
   }
 }

@@ -9,6 +9,7 @@
   "tags": [
     { "name": "Customers" },
     { "name": "Events" },
+    { "name": "Zapier" },
     { "name": "Shopify" }
   ],
   "paths": {
@@ -181,6 +182,100 @@
         }
       }
     },
+    "/integrations/zapier/me": {
+      "get": {
+        "tags": ["Zapier"],
+        "summary": "Zapier connection test",
+        "description": "Returns the authenticated business profile. Used by the Zapier app to verify an eos_live_* API key.",
+        "responses": {
+          "200": {
+            "description": "Business profile",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SuccessEnvelope" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/integrations/zapier/hooks": {
+      "post": {
+        "tags": ["Zapier"],
+        "summary": "Subscribe a Zapier REST Hook",
+        "description": "Registers an HTTPS endpoint that EngageOS POSTs to when a subscribed event fires. Requires zapier:hooks scope.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ZapierHookSubscribe" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Hook subscription created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SuccessEnvelope" }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/integrations/zapier/hooks/sample": {
+      "get": {
+        "tags": ["Zapier"],
+        "summary": "Sample hook payload",
+        "parameters": [
+          {
+            "name": "event",
+            "in": "query",
+            "required": true,
+            "schema": { "$ref": "#/components/schemas/ZapierEvent" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sample payload for field mapping",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SuccessEnvelope" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/integrations/zapier/hooks/{id}": {
+      "delete": {
+        "tags": ["Zapier"],
+        "summary": "Unsubscribe a Zapier REST Hook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hook unsubscribed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SuccessEnvelope" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/webhooks/shopify": {
       "servers": [{ "url": "/api" }],
       "post": {
@@ -206,7 +301,12 @@
   },
   "components": {
     "securitySchemes": {
-      "cookieSession": { "type": "apiKey", "in": "cookie", "name": "merchant_session" }
+      "cookieSession": { "type": "apiKey", "in": "cookie", "name": "merchant_session" },
+      "bearerApiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Merchant API key (eos_live_*) generated from Integrations → Zapier"
+      }
     },
     "parameters": {
       "Limit": {
@@ -454,6 +554,24 @@
           "customerId": { "type": "string", "format": "uuid" },
           "dedupKey": { "type": "string" },
           "metadata": { "type": "object" }
+        }
+      },
+      "ZapierEvent": {
+        "type": "string",
+        "enum": [
+          "customer.registered",
+          "customer.scan",
+          "scratch.completed",
+          "coupon.generated",
+          "coupon.redeemed"
+        ]
+      },
+      "ZapierHookSubscribe": {
+        "type": "object",
+        "required": ["hookUrl", "event"],
+        "properties": {
+          "hookUrl": { "type": "string", "format": "uri", "description": "HTTPS Zapier Catch Hook URL" },
+          "event": { "$ref": "#/components/schemas/ZapierEvent" }
         }
       }
     }

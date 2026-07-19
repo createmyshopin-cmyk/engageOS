@@ -14,6 +14,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { fetchWatiConsole } from "./api";
+import { WatiError } from "./wati-alerts";
 
 interface StatusPayload {
   ok: boolean;
@@ -41,20 +42,27 @@ export function WatiOverviewTab({ onGoTo }: { onGoTo: (tab: string) => void }) {
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (isRefresh = false) => {
     setError(null);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
     try {
       const [s, a] = await Promise.all([
         fetchWatiConsole("/api/m/integrations/wati"),
         fetchWatiConsole("/api/m/wati/analytics"),
       ]);
-      if (!s.ok) throw new Error(s.error ?? "Failed to load status");
-      if (!a.ok) throw new Error(a.error ?? "Failed to load analytics");
+      if (!s.ok) throw new Error(String(s.error ?? "Failed to load status"));
+      if (!a.ok) throw new Error(String(a.error ?? "Failed to load analytics"));
       setStatus(s);
       setAnalytics(a);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load overview");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -63,14 +71,10 @@ export function WatiOverviewTab({ onGoTo }: { onGoTo: (tab: string) => void }) {
     return () => clearTimeout(t);
   }, [load]);
 
-  if (error) {
-    return (
-      <div className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-5 text-xs font-bold text-[#B91C1C]">
-        {error}
-      </div>
-    );
+  if (error && !status) {
+    return <WatiError onRetry={() => load()}>{error}</WatiError>;
   }
-  if (!status || !analytics) {
+  if (loading || !status || !analytics) {
     return <WatiLoadingPanel label="Loading WATI overview…" />;
   }
 
@@ -91,6 +95,12 @@ export function WatiOverviewTab({ onGoTo }: { onGoTo: (tab: string) => void }) {
 
   return (
     <div className="space-y-5">
+      {error && (
+        <WatiError onRetry={() => load(true)} onDismiss={() => setError(null)}>
+          {error}
+        </WatiError>
+      )}
+
       {/* Connection banner */}
       <div
         className={`flex flex-wrap items-center gap-3 rounded-2xl border px-5 py-4 ${
@@ -170,10 +180,11 @@ export function WatiOverviewTab({ onGoTo }: { onGoTo: (tab: string) => void }) {
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-black text-[#111827]">Monthly Quota</h3>
             <button
-              onClick={load}
-              className="inline-flex items-center gap-1 text-[11px] font-bold text-[#3B82F6] hover:text-[#2563EB]"
+              onClick={() => load(true)}
+              disabled={refreshing}
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-[#3B82F6] hover:text-[#2563EB] disabled:opacity-50"
             >
-              <RefreshCw className="size-3" /> Refresh
+              <RefreshCw className={`size-3 ${refreshing ? "animate-spin" : ""}`} /> Refresh
             </button>
           </div>
           <p className="mt-3 text-2xl font-black text-[#111827]">
@@ -236,9 +247,16 @@ function AutoRow({
 
 export function WatiLoadingPanel({ label }: { label: string }) {
   return (
-    <div className="flex items-center justify-center gap-2 rounded-2xl border border-[#E5E7EB] bg-white py-14 text-xs font-bold text-[#6B7280]">
-      <Loader2 className="size-4 animate-spin text-[#3B82F6]" />
-      {label}
+    <div className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
+      <div className="flex items-center justify-center gap-2 py-10 text-xs font-bold text-[#6B7280]">
+        <Loader2 className="size-4 animate-spin text-[#3B82F6]" />
+        {label}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-20 animate-pulse rounded-xl bg-[#F3F4F6]" />
+        ))}
+      </div>
     </div>
   );
 }

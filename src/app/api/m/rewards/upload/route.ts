@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { authorizeMerchantRead, authorizeMerchantWrite } from "@/lib/merchant-route-auth";
 import { adminClient } from "@/lib/db/rpc";
 
 export const runtime = "nodejs";
@@ -17,10 +17,9 @@ type ApiResponse =
   | { ok: false; error: string };
 
 export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>> {
-  const repo = await getTenantRepository();
-  if (!repo) {
-    return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
-  }
+  const auth = await authorizeMerchantWrite();
+  if (!auth.ok) return auth.response as NextResponse<ApiResponse>;
+  const { repo } = auth;
 
   let form: FormData;
   try {

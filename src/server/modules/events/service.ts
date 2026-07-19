@@ -8,6 +8,7 @@ import { encodeCursor } from "@/server/http/pagination";
 import { EventRepository } from "@/server/modules/events/repository";
 import { toEventDTO, type EventDTO } from "@/server/modules/events/dto";
 import type { RecordEventBody } from "@/server/modules/events/validator";
+import { dispatchZapierEvent } from "@/lib/zapier/dispatch";
 
 /**
  * EventService — thin business layer over the universal event stream. Records
@@ -33,6 +34,13 @@ export class EventService extends Service {
       payload: input.payload,
       dedupKey: input.dedupKey,
       occurredAt: input.occurredAt,
+    });
+    dispatchZapierEvent(this.businessId, input.name, {
+      category: input.category,
+      customer_id: input.customerId ?? null,
+      campaign_id: input.campaignId ?? null,
+      source: input.source ?? "api",
+      ...(input.payload ?? {}),
     });
     // record_event returns the existing id on a dedup hit; we can't cheaply
     // distinguish here, so report deduped=false unless a dedupKey was supplied.

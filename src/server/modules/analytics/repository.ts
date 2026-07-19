@@ -4,6 +4,7 @@ import type { TenantRepository } from "@/lib/db/tenant-repository";
 import type {
   BusinessTotalsRow,
   CampaignPerformanceRowLike,
+  DailyActivityRowLike,
   TrafficSourceRowLike,
 } from "@/server/modules/analytics/dto";
 
@@ -47,5 +48,10 @@ export class AnalyticsRepository extends Repository {
   /** Traffic-source breakdown (reuses the existing traffic_sources RPC). */
   async trafficSources(): Promise<TrafficSourceRowLike[]> {
     return this.tenantRepo.trafficSources();
+  }
+
+  /** Per-day funnel counts for trend charts (IST buckets, bounded window). */
+  async dailyActivity(days: number): Promise<DailyActivityRowLike[]> {
+    return this.tenantRepo.businessDailyActivity(days);
   }
 }

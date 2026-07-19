@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { Suspense } from "react";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
 import { MerchantShell } from "@/components/merchant/merchant-shell";
 import { CampaignStatusBadge, CampaignTypeBadge, CampaignActions, EmptyState } from "@/components/merchant/campaigns-ui";
+import { CampaignsFilterBar } from "@/components/merchant/campaigns-filter-bar";
+import { CampaignsSectionNav } from "@/components/merchant/campaigns/campaigns-section-nav";
 import { campaignTypeLabel } from "@/lib/types";
-import type { Campaign, Prize } from "@/lib/types";
+import type { Campaign, CampaignStatus, Prize } from "@/lib/types";
 import { QrCode, Users, Gift, MessageSquare, BarChart3, Plus, CalendarDays } from "lucide-react";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +41,50 @@ function winRate(plays: number, wins: number): string | null {
   return `${Math.round((wins / plays) * 100)}%`;
 }
 
-export default async function CampaignsPage() {
+const VALID_STATUSES = new Set<CampaignStatus>([
+  "draft",
+  "scheduled",
+  "active",
+  "paused",
+  "completed",
+  "archived",
+]);
+
+function filterCampaigns(
+  campaigns: CampaignWithStats[],
+  opts: { q?: string; status?: string; range?: string }
+): CampaignWithStats[] {
+  const q = opts.q?.trim().toLowerCase();
+  const status =
+    opts.status && VALID_STATUSES.has(opts.status as CampaignStatus)
+      ? (opts.status as CampaignStatus)
+      : null;
+
+  let since: number | null = null;
+  if (opts.range === "7d") since = Date.now() - 7 * 86400 * 1000;
+  else if (opts.range === "30d") since = Date.now() - 30 * 86400 * 1000;
+  else if (opts.range === "90d") since = Date.now() - 90 * 86400 * 1000;
+
+  return campaigns.filter((c) => {
+    if (status && c.status !== status) return false;
+    if (since !== null && new Date(c.created_at).getTime() < since) return false;
+    if (q) {
+      const haystack = [c.name, c.slug, c.headline, campaignTypeLabel(c.campaign_type)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+interface PageProps {
+  searchParams: Promise<Record<string, string | undefined>>;
+}
+
+export default async function CampaignsPage({ searchParams }: PageProps) {
+  const params = await searchParams;
   const repo = await getTenantRepository();
   if (!repo) redirect("/m/login");
   const session = repo.session;
@@ -59,9 +105,6 @@ export default async function CampaignsPage() {
     throw new Error("Failed to load campaigns");
   }
 
-  // Tenant-wide customer count is the same across a business's campaigns.
-  const businessCustomers = await repo.count("customers");
-
   // Per-campaign stats in ONE aggregate round-trip + one prizes fetch,
   // instead of a 6-query fan-out per campaign.
   const [stats, { data: allPrizes }] = await Promise.all([
@@ -76,18 +119,24 @@ export default async function CampaignsPage() {
     prizesByCampaign.set(p.campaign_id, list);
   }
 
-  const campaigns: CampaignWithStats[] = (rawCampaigns ?? []).map((c: any) => {
+  const allCampaigns: CampaignWithStats[] = (rawCampaigns ?? []).map((c: any) => {
     const s = stats.get(c.id);
     return {
       ...c,
       plays: s?.plays ?? 0,
       wins: s?.wins ?? 0,
       redeemed: s?.redeemed ?? 0,
-      customers: businessCustomers,
+      customers: s?.customers ?? 0,
       wa_sent: s?.wa_sent ?? 0,
       remaining_coupons: s?.remaining_coupons ?? 0,
       prizes: prizesByCampaign.get(c.id) ?? [],
     };
+  });
+
+  const campaigns = filterCampaigns(allCampaigns, {
+    q: params.q,
+    status: params.status,
+    range: params.range,
   });
 
   // Fetch business details for shell and merchant ID
@@ -102,7 +151,7 @@ export default async function CampaignsPage() {
     <MerchantShell
       businessName={business?.name ?? session.name}
       city={business?.city ?? null}
-      campaignActive={campaigns.some((c) => c.status === "active")}
+      campaignActive={allCampaigns.some((c) => c.status === "active")}
     >
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
@@ -119,40 +168,22 @@ export default async function CampaignsPage() {
         </Link>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap gap-3 mb-6">
-        <div className="relative flex-1 min-w-[200px]">
-          <input
-            type="search"
-            placeholder="Search campaigns..."
-            className="w-full pl-9 pr-4 py-2.5 text-sm bg-white border border-neutral-200 rounded-xl text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10"
-          />
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" />
-          </svg>
-        </div>
+      <CampaignsSectionNav />
 
-        <select className="px-4 py-2.5 text-sm bg-white border border-neutral-200 rounded-xl text-neutral-700 focus:outline-none focus:border-emerald-500 cursor-pointer">
-          <option value="">Status: All</option>
-          <option value="active">Active</option>
-          <option value="draft">Draft</option>
-          <option value="scheduled">Scheduled</option>
-          <option value="paused">Paused</option>
-          <option value="completed">Completed</option>
-          <option value="archived">Archived</option>
-        </select>
-
-        <select className="px-4 py-2.5 text-sm bg-white border border-neutral-200 rounded-xl text-neutral-700 focus:outline-none focus:border-emerald-500 cursor-pointer">
-          <option value="">Date: All Time</option>
-          <option value="7d">Last 7 days</option>
-          <option value="30d">Last 30 days</option>
-          <option value="90d">Last 90 days</option>
-        </select>
-      </div>
+      <Suspense fallback={null}>
+        <CampaignsFilterBar />
+      </Suspense>
 
       {/* Campaign Grid / Empty */}
-      {campaigns.length === 0 ? (
+      {allCampaigns.length === 0 ? (
         <EmptyState />
+      ) : campaigns.length === 0 ? (
+        <div className="flex flex-col items-center justify-center min-h-[280px] text-center px-6">
+          <h2 className="text-lg font-bold text-neutral-900 mb-2">No campaigns match your filters</h2>
+          <p className="text-sm text-neutral-500 max-w-sm">
+            Try clearing the search or status filter to see all campaigns.
+          </p>
+        </div>
       ) : (
         <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
           {campaigns.map((campaign) => (

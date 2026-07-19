@@ -8,29 +8,33 @@
  * tenancy is enforced server-side by the v1 auth guard (no business id sent).
  */
 
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { apiClient, buildQuery, type ApiResult } from "@/lib/api/client";
-import type { OrderListItemDTO } from "@/lib/api/types";
+import type { OrderCouponFilter, OrderDetailDTO, OrderListItemDTO } from "@/lib/api/types";
 
 export const orderKeys = {
   all: ["orders"] as const,
   lists: () => [...orderKeys.all, "list"] as const,
   list: (filters: OrderFeedFilters) => [...orderKeys.lists(), filters] as const,
+  details: () => [...orderKeys.all, "detail"] as const,
+  detail: (id: string) => [...orderKeys.details(), id] as const,
 };
 
 export interface OrderFeedFilters {
   status?: string | null;
   customerId?: string | null;
+  couponFilter?: OrderCouponFilter;
 }
 
 const PAGE_LIMIT = 25;
 
-/** Infinite, keyset-paginated order list with optional status/customer filter. */
+/** Infinite, keyset-paginated order list with optional status/customer/coupon filter. */
 export function useOrderList(filters: OrderFeedFilters = {}) {
   const status = filters.status ?? null;
   const customerId = filters.customerId ?? null;
+  const couponFilter = filters.couponFilter ?? "with_coupon";
   return useInfiniteQuery({
-    queryKey: orderKeys.list({ status, customerId }),
+    queryKey: orderKeys.list({ status, customerId, couponFilter }),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) =>
       apiClient.get<OrderListItemDTO[]>(
@@ -38,12 +42,23 @@ export function useOrderList(filters: OrderFeedFilters = {}) {
           limit: PAGE_LIMIT,
           status,
           customerId,
+          couponFilter,
           cursor: pageParam,
         })}`,
         signal
       ),
     getNextPageParam: (last: ApiResult<OrderListItemDTO[]>) =>
       last.page?.hasMore ? last.page.nextCursor : undefined,
+  });
+}
+
+/** Single order detail with line items and coupon attribution. */
+export function useOrderDetail(orderId: string | null) {
+  return useQuery({
+    queryKey: orderId ? orderKeys.detail(orderId) : orderKeys.details(),
+    queryFn: ({ signal }) =>
+      apiClient.get<OrderDetailDTO>(`/api/v1/orders/${orderId}`, signal),
+    enabled: !!orderId,
   });
 }
 

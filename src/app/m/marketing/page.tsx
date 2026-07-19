@@ -18,7 +18,7 @@ export const metadata: Metadata = {
  * lives in the `MarketingView` client island, which fetches through
  * `/api/v1/marketing/broadcasts` via React Query (HYBRID data-fetch). Composing
  * / sending a broadcast is intentionally NOT here — that flow lives in the
- * WhatsApp composer (`/m/whatsapp`); this phase adds no send automation.
+ * WATI console (`/m/wati`); this phase adds no send automation.
  */
 export default async function MarketingPage() {
   const repo = await getTenantRepository();

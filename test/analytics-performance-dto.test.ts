@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   toCampaignPerformanceDTO,
+  toDailyActivityDTO,
   toTrafficSourceDTO,
   type CampaignPerformanceRowLike,
+  type DailyActivityRowLike,
   type TrafficSourceRowLike,
 } from "@/server/modules/analytics/dto";
 
@@ -55,6 +57,25 @@ describe("campaign performance DTO", () => {
     expect(dto.totalEvents).toBe(0);
     expect(dto.scans).toBe(0);
     expect(dto.lastActivity).toBeNull();
+  });
+});
+
+describe("daily activity DTO", () => {
+  it("maps a row to camelCase and coerces counts to numbers", () => {
+    const row: DailyActivityRowLike = {
+      day: "2026-07-18",
+      registrations: "12" as unknown as number,
+      scratches: 8,
+      coupons: 5,
+      redemptions: 2,
+    };
+    expect(toDailyActivityDTO(row)).toEqual({
+      day: "2026-07-18",
+      registrations: 12,
+      scratches: 8,
+      coupons: 5,
+      redemptions: 2,
+    });
   });
 });
 

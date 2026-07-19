@@ -1,9 +1,10 @@
 import "server-only";
+import { after } from "next/server";
 import { Controller } from "@/server/core/Controller";
-import { requireScope } from "@/server/auth/guard";
+import { requireScope, requireRole } from "@/server/auth/guard";
 import { tenantRepositoryFor, type RequestContext } from "@/server/http/context";
 import { paginated } from "@/server/http/responses";
-import type { NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { CustomerService } from "@/server/modules/customers/service";
 import type { Cursor } from "@/server/http/pagination";
 import { decodeCursor } from "@/server/http/pagination";
@@ -14,7 +15,40 @@ import type {
   AddTagBody,
   MergeCustomersBody,
   TimelineQuery,
+  ExportCustomersQuery,
+  CustomerJoinedFilter,
+  CustomerRewardFilter,
 } from "@/server/modules/customers/validator";
+
+function joinedDays(joined?: CustomerJoinedFilter): number | null {
+  switch (joined) {
+    case "7d":
+      return 7;
+    case "30d":
+      return 30;
+    case "90d":
+      return 90;
+    default:
+      return null;
+  }
+}
+
+function listFilters(query: {
+  search?: string;
+  rewardFilter?: CustomerRewardFilter;
+  joined?: CustomerJoinedFilter;
+  joinedFrom?: string;
+  joinedTo?: string;
+}) {
+  const hasRange = !!(query.joinedFrom || query.joinedTo);
+  return {
+    search: query.search?.trim() ? query.search.trim() : null,
+    rewardFilter: query.rewardFilter ?? "all",
+    joinedDays: hasRange ? null : joinedDays(query.joined),
+    joinedFrom: query.joinedFrom ?? null,
+    joinedTo: query.joinedTo ?? null,
+  };
+}
 
 /**
  * CustomerController — thin orchestration between the route wrapper and
@@ -37,10 +71,35 @@ export class CustomerController extends Controller {
     const { items, page } = await this.service.list({
       limit: query.limit ?? 25,
       cursor,
-      search: query.search ?? null,
       direction: query.direction ?? "desc",
+      ...listFilters(query),
     });
     return paginated(items, page, { correlationId: this.ctx.correlationId, version: this.ctx.version });
+  }
+
+  async exportCustomers(query: ExportCustomersQuery): Promise<NextResponse> {
+    requireScope(this.principal(), "read");
+    requireRole(this.principal(), "owner", "manager");
+    const format = query.format ?? "csv";
+    const { body, filename, rowCount, contentType } = await this.service.exportCustomers(
+      listFilters(query),
+      format
+    );
+    await this.tenant.recordEvent("customer.export", null, {
+      format,
+      rowCount,
+      source: "customers_page",
+    }).catch(() => {});
+    const payload: BodyInit =
+      typeof body === "string" ? body : new Uint8Array(body);
+    return new NextResponse(payload, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Cache-Control": "no-store",
+      },
+    });
   }
 
   async get(id: string) {
@@ -55,7 +114,31 @@ export class CustomerController extends Controller {
 
   async upsert(body: UpsertCustomerBody) {
     requireScope(this.principal(), "write");
-    return this.service.upsert(this.tenant, body);
+    const customer = await this.service.upsert(this.tenant, body);
+    after(async () => {
+      const { syncCustomerToWacrm } = await import("@/lib/wacrm/sync");
+      await syncCustomerToWacrm({
+        businessId: this.businessId,
+        phone: customer.phone,
+        name: customer.name,
+        email: customer.email,
+        customerId: customer.id,
+      });
+
+      const { enqueueCommunicationJob } = await import("@/lib/communication/outbox");
+      const { CommunicationEvents } = await import("@/lib/communication/events");
+      await enqueueCommunicationJob({
+        businessId: this.businessId,
+        eventType: CommunicationEvents.CUSTOMER_CREATED,
+        dedupKey: `customer.created:${customer.id}`,
+        payload: {
+          customerId: customer.id,
+          phone: customer.phone,
+          customerName: customer.name,
+        },
+      });
+    });
+    return customer;
   }
 
   async setConsent(id: string, body: SetConsentBody) {

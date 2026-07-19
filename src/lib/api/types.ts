@@ -21,6 +21,8 @@ export interface PageInfo {
   nextCursor: string | null;
   hasMore: boolean;
   limit: number;
+  totalCount?: number;
+  offset?: number;
 }
 
 export type SuccessBody<T> = {
@@ -46,6 +48,9 @@ export interface CustomerListItemDTO {
   name: string | null;
   email: string | null;
   createdAt: string;
+  latestPrizeName: string | null;
+  latestCode: string | null;
+  rewardCount: number;
 }
 
 export interface CustomerConsents {
@@ -153,6 +158,19 @@ export interface AnalyticsPerformanceDTO {
   sources: TrafficSourceDTO[];
 }
 
+export interface DailyActivityDTO {
+  day: string;
+  registrations: number;
+  scratches: number;
+  coupons: number;
+  redemptions: number;
+}
+
+export interface AnalyticsTrendsDTO {
+  days: number;
+  series: DailyActivityDTO[];
+}
+
 // ── Campaign DTOs (mirror of src/server/modules/campaigns/dto.ts) ──
 
 export interface CampaignStatsDTO {
@@ -207,6 +225,7 @@ export interface ShopifyScopesDTO {
 export interface ShopifyCouponDropDTO {
   campaign_id: string;
   campaign_name: string;
+  campaign_slug: string;
   campaign_status: string;
   pool_status: string;
   pool_last_error: string | null;
@@ -293,6 +312,8 @@ export interface ShopifyTriggerResultDTO {
 
 // ── Orders DTOs (mirror of src/server/modules/orders/dto.ts) ──
 
+export type OrderCouponFilter = "all" | "with_coupon";
+
 export interface OrderListItemDTO {
   id: string;
   orderNumber: string | null;
@@ -301,13 +322,86 @@ export interface OrderListItemDTO {
   fulfillmentStatus: string | null;
   currency: string;
   totalPrice: number;
+  totalDiscount: number | null;
   customerId: string | null;
   customerName: string | null;
   customerPhone: string | null;
   placedAt: string;
+  discountCode: string | null;
+  campaignId: string | null;
+  campaignName: string | null;
+  hasCampaignCoupon: boolean;
+}
+
+export interface OrderLineItemDTO {
+  id: string;
+  title: string | null;
+  sku: string | null;
+  quantity: number;
+  price: number;
+  lineTotal: number;
+}
+
+export interface OrderDetailDTO extends OrderListItemDTO {
+  subtotal: number | null;
+  totalTax: number | null;
+  items: OrderLineItemDTO[];
 }
 
 // ── Products DTOs (mirror of src/server/modules/products/dto.ts) ──
+
+export interface ProductCouponRedemptionDTO {
+  orderId: string;
+  orderNumber: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  discountCode: string | null;
+  placedAt: string;
+  quantity: number;
+  lineTotal: number;
+}
+
+export interface ProductCouponStatsDTO {
+  redemptionCount: number;
+  customerCount: number;
+  quantitySold: number;
+  revenue: number;
+  lastRedeemedAt: string | null;
+  latestDiscountCode: string | null;
+  latestCustomerName: string | null;
+  recentRedemptions: ProductCouponRedemptionDTO[];
+}
+
+export interface ProductCouponSummaryDTO {
+  totalProducts: number;
+  productsWithCoupons: number;
+  totalCouponOrders: number;
+  totalCustomers: number;
+}
+
+export interface ProductCouponRedemptionsDTO {
+  product: ProductListItemDTO | null;
+  redemptions: ProductCouponRedemptionDTO[];
+}
+
+export type ProductCouponFilter = "all" | "with_coupon" | "without_coupon";
+export type ProductStockFilter = "all" | "in_stock" | "low_stock" | "out_of_stock";
+export type ProductNewFilter = "all" | "new";
+export type ProductSort =
+  | "coupon_first"
+  | "newest"
+  | "oldest"
+  | "stock_first"
+  | "price_low"
+  | "price_high"
+  | "name_az"
+  | "name_za";
+export type ProductStockStatus = "in_stock" | "low_stock" | "out_of_stock" | "unknown";
+
+export interface ProductStockDTO {
+  status: ProductStockStatus;
+  available: number | null;
+}
 
 export interface ProductListItemDTO {
   id: string;
@@ -319,9 +413,94 @@ export interface ProductListItemDTO {
   price: number | null;
   imageUrl: string | null;
   createdAt: string;
+  isNew: boolean;
+  stock: ProductStockDTO;
+  couponStats: ProductCouponStatsDTO | null;
 }
 
 // ── Loyalty DTO (mirror of src/server/modules/loyalty/dto.ts) ──
+
+export type LoyaltyTier = "bronze" | "silver" | "gold" | "platinum";
+
+export interface LoyaltyOverviewDTO {
+  totalLoyaltyMembers: number;
+  activeMembers: number;
+  totalPointsIssued: number;
+  totalPointsRedeemed: number;
+  rewardRedemptionRate: number;
+  tierCounts: { bronze: number; silver: number; gold: number; platinum: number };
+  repeatPurchaseRate: number;
+  loyaltyRevenue: number;
+  payingCustomers: number;
+  avgCustomerSpend: number;
+  topCustomerSpend: number;
+}
+
+export interface LoyaltyLeaderboardItemDTO {
+  rank: number;
+  customerId: string;
+  name: string | null;
+  phone: string;
+  tier: LoyaltyTier;
+  totalSpend: number;
+  totalOrders: number;
+  avgOrderValue: number | null;
+  lifetimePoints: number;
+  lastOrderAt: string | null;
+  rfmScore: string | null;
+  healthScore: number | null;
+  clv: number | null;
+}
+
+export interface LoyaltyWalletDTO {
+  customerId: string;
+  name: string | null;
+  phone: string;
+  availablePoints: number;
+  lifetimePoints: number;
+  redeemedPoints: number;
+  expiringSoon: number;
+  tier: LoyaltyTier;
+  tierName: string;
+  bonusMultiplier: number;
+  updatedAt: string | null;
+}
+
+export interface PointsRuleDTO {
+  id: string;
+  ruleType: string;
+  pointsPerUnit: number | null;
+  fixedPoints: number | null;
+  multiplier: number;
+  active: boolean;
+}
+
+export interface MembershipTierDTO {
+  id: string;
+  slug: LoyaltyTier;
+  name: string;
+  minPoints: number;
+  maxPoints: number | null;
+  color: string;
+  icon: string;
+  bonusMultiplier: number;
+  benefits: string[];
+  sortOrder: number;
+}
+
+export interface PointsTransactionDTO {
+  id: string;
+  txnType: "earn" | "redeem" | "expire" | "adjust";
+  source: string;
+  delta: number;
+  balanceAfter: number;
+  note: string | null;
+  campaignId: string | null;
+  orderId: string | null;
+  playId: string | null;
+  createdAt: string;
+  createdBy: string;
+}
 
 export interface LoyaltyProfileDTO {
   customerId: string;
@@ -343,7 +522,49 @@ export interface LoyaltyProfileDTO {
   computedAt: string | null;
 }
 
-// ── Marketing DTO (mirror of src/server/modules/marketing/dto.ts) ──
+// ── Winners DTO (mirror of src/server/modules/winners/dto.ts) ──
+
+export type WinnerPrizeCategory = "all" | "coupon" | "gift" | "scratch_win";
+export type WinnerCampaignScope = "eligible" | "active" | "ended";
+
+export interface WinnerListItemDTO {
+  eventId: string;
+  customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  campaignId: string | null;
+  campaignName: string | null;
+  campaignType: string | null;
+  prizeName: string | null;
+  prizeType: string | null;
+  prizeValue: number | null;
+  couponCode: string | null;
+  wonAt: string;
+  waOptOut: boolean;
+}
+
+export interface WinnersSummaryDTO {
+  totalWinners: number;
+  couponsWon: number;
+  giftsWon: number;
+  ongoingCampaigns: number;
+  prizesInPeriod: number;
+  momGrowthPct: number;
+  couponsPct: number;
+  giftsPct: number;
+  winnersToday: number;
+  winnersYesterday: number;
+}
+
+export interface WinnerListFilters {
+  search?: string;
+  prizeCategory?: WinnerPrizeCategory;
+  campaignId?: string | null;
+  campaignScope?: WinnerCampaignScope;
+  wonFrom?: string | null;
+  wonTo?: string | null;
+}
+
 
 export interface BroadcastListItemDTO {
   id: string;

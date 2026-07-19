@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { WatiLoadingPanel } from "./overview-tab";
 import { fetchWatiConsole } from "./api";
+import { WatiError } from "./wati-alerts";
 
 interface AnalyticsPayload {
   ok: boolean;
@@ -25,24 +27,34 @@ interface AnalyticsPayload {
 export function WatiAnalyticsTab() {
   const [data, setData] = useState<AnalyticsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      fetchWatiConsole("/api/m/wati/analytics")
-        .then((json) => (json.ok ? setData(json) : setError(json.error)))
-        .catch(() => setError("Failed to load analytics"));
-    }, 0);
-    return () => clearTimeout(t);
+  const load = useCallback(async (isRefresh = false) => {
+    setError(null);
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    try {
+      const json = await fetchWatiConsole("/api/m/wati/analytics");
+      if (json.ok) setData(json);
+      else setError(String(json.error ?? "Failed to load analytics"));
+    } catch {
+      setError("Failed to load analytics");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, []);
 
-  if (error) {
-    return (
-      <div className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-5 text-xs font-bold text-[#B91C1C]">
-        {error}
-      </div>
-    );
+  useEffect(() => {
+    const t = setTimeout(() => load(), 0);
+    return () => clearTimeout(t);
+  }, [load]);
+
+  if (error && !data) {
+    return <WatiError onRetry={() => load()}>{error}</WatiError>;
   }
-  if (!data) return <WatiLoadingPanel label="Loading WATI analytics…" />;
+  if (loading || !data) return <WatiLoadingPanel label="Loading WATI analytics…" />;
 
   const { events, overview } = data;
   const deliveryRate = events.sent > 0 ? Math.round((events.delivered / events.sent) * 100) : 0;
@@ -60,6 +72,24 @@ export function WatiAnalyticsTab() {
 
   return (
     <div className="space-y-5">
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => load(true)}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-[#E5E7EB] bg-white px-3 py-2 text-[11px] font-bold text-[#3B82F6] hover:bg-[#F8FAFC] disabled:opacity-50 transition-colors"
+        >
+          <RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <WatiError onRetry={() => load(true)} onDismiss={() => setError(null)}>
+          {error}
+        </WatiError>
+      )}
+
       {/* Rates */}
       <div className="grid grid-cols-3 gap-3">
         <RateCard label="Delivery rate" value={`${deliveryRate}%`} note="delivered / sent" good={deliveryRate >= 85} />

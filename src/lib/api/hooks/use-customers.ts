@@ -38,10 +38,37 @@ import type {
 
 // ── Query keys (single source of truth for cache invalidation) ──
 
+export type CustomerRewardFilter = "all" | "has_code" | "active" | "redeemed" | "no_reward";
+export type CustomerJoinedFilter = "all" | "7d" | "30d" | "90d";
+
+export interface CustomerListFilters {
+  search?: string;
+  rewardFilter?: CustomerRewardFilter;
+  joined?: CustomerJoinedFilter;
+  joinedFrom?: string | null;
+  joinedTo?: string | null;
+}
+
+function buildFilterQuery(filters: CustomerListFilters) {
+  const search = filters.search?.trim() ?? "";
+  const rewardFilter = filters.rewardFilter ?? "all";
+  const joined = filters.joined;
+  const joinedFrom = filters.joinedFrom?.trim() || null;
+  const joinedTo = filters.joinedTo?.trim() || null;
+
+  return {
+    search: search || null,
+    rewardFilter: rewardFilter === "all" ? null : rewardFilter,
+    joined: joinedFrom || joinedTo ? null : joined && joined !== "all" ? joined : null,
+    joinedFrom,
+    joinedTo,
+  };
+}
+
 export const customerKeys = {
   all: ["customers"] as const,
   lists: () => [...customerKeys.all, "list"] as const,
-  list: (search: string) => [...customerKeys.lists(), { search }] as const,
+  list: (filters: CustomerListFilters) => [...customerKeys.lists(), filters] as const,
   details: () => [...customerKeys.all, "detail"] as const,
   detail: (id: string) => [...customerKeys.details(), id] as const,
   profile360: (id: string) => [...customerKeys.detail(id), "360"] as const,
@@ -53,19 +80,26 @@ const PAGE_LIMIT = 25;
 // ── List (infinite / keyset) ──
 
 /**
- * Infinite, keyset-paginated customer list with optional free-text search.
+ * Infinite, keyset-paginated customer list with search + filters.
  * `pageParam` is the opaque `nextCursor` from the previous page.
  */
-export function useCustomerList(search: string) {
+export function useCustomerList(filters: CustomerListFilters = {}) {
+  const search = filters.search?.trim() ?? "";
+  const rewardFilter = filters.rewardFilter ?? "all";
+  const joined = filters.joined ?? "all";
+  const joinedFrom = filters.joinedFrom ?? null;
+  const joinedTo = filters.joinedTo ?? null;
+  const normalized: CustomerListFilters = { search, rewardFilter, joined, joinedFrom, joinedTo };
+
   return useInfiniteQuery({
-    queryKey: customerKeys.list(search),
+    queryKey: customerKeys.list(normalized),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) =>
       apiClient.get<CustomerListItemDTO[]>(
         `/api/v1/customers${buildQuery({
           limit: PAGE_LIMIT,
-          search: search || null,
           cursor: pageParam,
+          ...buildFilterQuery(normalized),
         })}`,
         signal
       ),
@@ -79,6 +113,54 @@ export function flattenCustomerPages(
   pages: ApiResult<CustomerListItemDTO[]>[] | undefined
 ): CustomerListItemDTO[] {
   return (pages ?? []).flatMap((p) => p.data);
+}
+
+export type CustomerExportFormat = "csv" | "xlsx";
+
+/** Download customers matching the current filters as CSV or Excel. */
+export async function exportCustomers(
+  filters: CustomerListFilters = {},
+  format: CustomerExportFormat = "csv"
+): Promise<void> {
+  const normalized: CustomerListFilters = {
+    search: filters.search?.trim() ?? "",
+    rewardFilter: filters.rewardFilter ?? "all",
+    joined: filters.joined ?? "all",
+    joinedFrom: filters.joinedFrom ?? null,
+    joinedTo: filters.joinedTo ?? null,
+  };
+  const qs = buildQuery({ ...buildFilterQuery(normalized), format });
+
+  const res = await fetch(`/api/v1/customers/export${qs}`, { credentials: "same-origin" });
+  if (!res.ok) {
+    let message = "Export failed";
+    try {
+      const body = await res.json();
+      if (body?.error?.message) message = body.error.message;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const fallbackExt = format === "xlsx" ? "xlsx" : "csv";
+  const filename =
+    match?.[1] ?? `campaign-customers-${new Date().toISOString().slice(0, 10)}.${fallbackExt}`;
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+/** @deprecated Use exportCustomers(filters, "csv") */
+export async function exportCustomersCsv(filters: CustomerListFilters = {}): Promise<void> {
+  return exportCustomers(filters, "csv");
 }
 
 // ── Single customer / profile / 360 ──

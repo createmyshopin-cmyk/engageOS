@@ -3,6 +3,7 @@ import type { ExperienceSettings, PlayResult, PrizeType, RedirectSettings } from
 import { RedirectCountdown } from "./RedirectCountdown";
 import { SmartImage } from "./SmartImage";
 import { playRewardChime } from "../utils/sound";
+import { shopifyDiscountUrl } from "../utils/shopify-discount-url";
 
 // Confetti is decorative — split it out of the critical reveal path
 const Confetti = lazy(() =>
@@ -31,6 +32,15 @@ function formatExpiry(iso: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+function claimHint(result: WonResult): string {
+  if (result.redeem_online) {
+    return result.discount_summary
+      ? `${result.discount_summary} — use this code at checkout.`
+      : "Use this code at checkout to redeem your discount.";
+  }
+  return CLAIM_HINTS[result.prize_type];
 }
 
 interface PrizeRevealProps {
@@ -100,7 +110,17 @@ export function PrizeReveal({
           </p>
         </div>
       )}
-      <p className="max-w-xs text-sm text-muted">{CLAIM_HINTS[result.prize_type]}</p>
+      <p className="max-w-xs text-sm text-muted">{claimHint(result)}</p>
+      {result.redeem_online && result.store_url && result.coupon_code && (
+        <a
+          href={shopifyDiscountUrl(result.store_url, result.coupon_code)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center justify-center rounded-2xl bg-brand px-6 py-3 text-sm font-semibold text-white"
+        >
+          Shop now with code →
+        </a>
+      )}
       {expiry && <p className="text-xs text-muted">Valid until {expiry}</p>}
       {redirect?.enabled && redirect.destination_type !== "none" && redirect.url && (
         <RedirectCountdown

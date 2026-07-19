@@ -3,6 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { ScratchCard } from "@/components/play/scratch-card";
+import { getOrCreateDeviceId } from "@/lib/play/device-id";
+import { shopifyDiscountUrl } from "@/lib/shopify/storefront-url";
 import { isSafeRedirectUrl } from "@/lib/validation";
 import { useTracking } from "@/lib/tracking/react";
 import type { CampaignDisplay, PlayResult, PrizeType, RedirectDestinationType } from "@/lib/types";
@@ -60,6 +62,7 @@ type Step =
 interface FieldErrors {
   name?: string;
   phone?: string;
+  whatsappConsent?: string;
 }
 
 const BLOCKED_MESSAGES: Record<
@@ -159,7 +162,12 @@ function hasCode(type: PrizeType): boolean {
 /** Fire-and-forget experience event beacon (best-effort, never blocks UI). */
 function beacon(campaignId: string, eventType: string, metadata?: Record<string, unknown>) {
   try {
-    const payload = JSON.stringify({ campaignId, eventType, metadata });
+    const payload = JSON.stringify({
+      campaignId,
+      eventType,
+      metadata,
+      deviceId: getOrCreateDeviceId(),
+    });
     if (typeof navigator !== "undefined" && navigator.sendBeacon) {
       navigator.sendBeacon("/api/experience", new Blob([payload], { type: "application/json" }));
     } else {
@@ -431,6 +439,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
   }, [showConfetti]);
 
   const [phone, setPhone] = useState("");
+  const [whatsappConsent, setWhatsappConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -447,7 +456,15 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
       const res = await fetch("/api/play", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ merchantSlug, campaignSlug, name, phone, source }),
+        body: JSON.stringify({
+          merchantSlug,
+          campaignSlug,
+          name,
+          phone,
+          whatsappConsent,
+          source,
+          deviceId: getOrCreateDeviceId(),
+        }),
       });
 
       const json: unknown = await res.json();
@@ -499,6 +516,9 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
         )}
         <ScratchCard onReveal={() => {
           setState({ step: "revealed", result });
+          if ("defer_scratch_event" in result && result.defer_scratch_event) {
+            beacon(display.campaign_id, "scratch.completed", { won: result.won });
+          }
           track("scratch_completed");
           if (result.won) {
             beacon(display.campaign_id, "reward.viewed", { prizeType: result.prize_type });
@@ -584,20 +604,21 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
                         })}
                       </p>
                     )}
-                    {result.redeem_online && result.store_url && (
+                    {result.redeem_online && result.store_url && result.coupon_code && (
                       <a
-                        href={result.store_url}
+                        href={shopifyDiscountUrl(result.store_url, result.coupon_code)}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={() =>
                           track("shop_now_clicked", {
-                            destination: "product",
-                            url: result.store_url,
+                            destination: "shopify_discount",
+                            url: shopifyDiscountUrl(result.store_url!, result.coupon_code!),
+                            coupon_code: result.coupon_code,
                           })
                         }
                         className="mt-3 inline-block rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white active:bg-amber-700"
                       >
-                        Shop now →
+                        Shop now with code →
                       </a>
                     )}
                   </div>
@@ -698,6 +719,23 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
           We&apos;ll send you offers on WhatsApp
         </p>
       </div>
+
+      <label className="flex items-start gap-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
+        <input
+          type="checkbox"
+          checked={whatsappConsent}
+          onChange={(event) => setWhatsappConsent(event.target.checked)}
+          required
+          className="mt-0.5 size-4 rounded border-neutral-300 accent-amber-600"
+        />
+        <span>
+          I agree to receive this reward and future offers from {display.business_name} on WhatsApp.
+          I can reply STOP at any time.
+        </span>
+      </label>
+      {fieldErrors.whatsappConsent && (
+        <p className="text-sm text-red-600">{fieldErrors.whatsappConsent}</p>
+      )}
 
       {formError && (
         <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">

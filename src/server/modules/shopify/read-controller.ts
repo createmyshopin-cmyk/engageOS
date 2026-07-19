@@ -48,4 +48,10 @@ export class ShopifyReadController extends Controller {
     const data = await this.service.couponDrops();
     return ok({ campaigns: data }, { correlationId: this.ctx.correlationId, version: this.ctx.version });
   }
+
+  async retryCouponDrops(body: { campaignId?: string }): Promise<NextResponse> {
+    requireScope(this.principal(), "write");
+    const retried = await this.service.retryCouponDropActivations(body.campaignId);
+    return ok({ retried }, { correlationId: this.ctx.correlationId, version: this.ctx.version });
+  }
 }

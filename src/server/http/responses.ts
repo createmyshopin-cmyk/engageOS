@@ -30,6 +30,10 @@ export interface PageInfo {
   hasMore: boolean;
   /** Echo of the page size actually applied. */
   limit: number;
+  /** Total matching rows (offset-paginated endpoints only). */
+  totalCount?: number;
+  /** Zero-based offset of the current page (offset-paginated endpoints only). */
+  offset?: number;
 }
 
 export type SuccessBody<T> = {

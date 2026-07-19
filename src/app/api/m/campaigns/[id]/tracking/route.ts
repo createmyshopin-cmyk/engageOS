@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getTenantRepository } from "@/lib/db/tenant-repository";
+import { authorizeMerchantRead, authorizeMerchantWrite } from "@/lib/merchant-route-auth";
 import { PROVIDER_KEYS } from "@/lib/tracking/types";
 import { isValidProviderId } from "@/lib/tracking/validation";
 import {
@@ -32,8 +32,9 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  const auth = await authorizeMerchantRead();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   const { id } = await params;
   try {
@@ -54,8 +55,9 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const repo = await getTenantRepository();
-  if (!repo) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  const auth = await authorizeMerchantWrite();
+  if (!auth.ok) return auth.response;
+  const { repo } = auth;
 
   const { id } = await params;
 

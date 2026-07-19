@@ -3,6 +3,7 @@ import { staffLoginSchema } from "@/lib/validation";
 import { adminClient } from "@/lib/db/rpc";
 import { createStaffSession, verifyPin, isLegacyPinHash, hashPin } from "@/lib/staff-session";
 import { clientIpFromHeaders } from "@/lib/ip";
+import { checkRateLimit } from "@/lib/rate-limit";
 import type { Business } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -29,14 +30,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
 
   try {
     const supabase = adminClient();
+    const ip = clientIpFromHeaders(req.headers);
 
-    // Brute-force guard: 10 login attempts per IP per hour.
-    const { data: allowed, error: rlError } = await supabase.rpc(
-      "check_rate_limit",
-      { p_key: `login:${clientIpFromHeaders(req.headers)}`, p_max: 10 }
-    );
-    if (rlError) throw new Error(`rate limit check failed: ${rlError.message}`);
-    if (!allowed) {
+    // Brute-force guard: per-IP and per-store limits.
+    const [ipAllowed, storeAllowed] = await Promise.all([
+      checkRateLimit(`stafflogin:ip:${ip}`, 10),
+      checkRateLimit(`stafflogin:store:${parsed.data.businessSlug}`, 15),
+    ]);
+    if (!ipAllowed || !storeAllowed) {
       return NextResponse.json(
         { ok: false, error: "Too many attempts. Try again in an hour." },
         { status: 429 }

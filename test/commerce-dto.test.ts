@@ -72,10 +72,15 @@ describe("order list item DTO", () => {
     fulfillment_status: "fulfilled",
     currency: "INR",
     total_price: "1499.50",
+    total_discount: "100",
     customer_id: "cust-1",
     customer_phone: "+919999999999",
     placed_at: "2026-07-10T00:00:00Z",
+    discount_code: "WIN-ABC123",
+    campaign_id: "camp-1",
+    coupon_id: "coup-1",
     customers: { name: "Asha" },
+    campaigns: { name: "Summer Drop" },
   };
 
   it("maps snake_case columns to the camelCase wire shape and coerces total", () => {
@@ -88,10 +93,15 @@ describe("order list item DTO", () => {
       fulfillmentStatus: "fulfilled",
       currency: "INR",
       totalPrice: 1499.5,
+      totalDiscount: 100,
       customerId: "cust-1",
       customerName: "Asha",
       customerPhone: "+919999999999",
       placedAt: "2026-07-10T00:00:00Z",
+      discountCode: "WIN-ABC123",
+      campaignId: "camp-1",
+      campaignName: "Summer Drop",
+      hasCampaignCoupon: true,
     });
   });
 
@@ -107,10 +117,15 @@ describe("order list item DTO", () => {
       customer_phone: null,
       customers: null,
       total_price: null,
+      coupon_id: null,
+      discount_code: null,
+      campaign_id: null,
+      campaigns: null,
     });
     expect(dto.customerId).toBeNull();
     expect(dto.customerName).toBeNull();
     expect(dto.totalPrice).toBe(0);
+    expect(dto.hasCampaignCoupon).toBe(false);
   });
 });
 
@@ -118,6 +133,7 @@ describe("product list item DTO", () => {
   it("maps snake_case columns and coerces a numeric-string price", () => {
     const dto = toProductListItemDTO({
       id: "p1",
+      shopify_product_id: "12345",
       title: "Onam Sadya Kit",
       handle: "onam-sadya-kit",
       product_type: "Food",
@@ -126,7 +142,7 @@ describe("product list item DTO", () => {
       price: "899.00",
       image_url: "https://cdn/x.png",
       created_at: "2026-06-01T00:00:00Z",
-    });
+    }, { status: "in_stock", available: 12 });
     expect(dto).toEqual({
       id: "p1",
       title: "Onam Sadya Kit",
@@ -137,12 +153,16 @@ describe("product list item DTO", () => {
       price: 899,
       imageUrl: "https://cdn/x.png",
       createdAt: "2026-06-01T00:00:00Z",
+      isNew: false,
+      stock: { status: "in_stock", available: 12 },
+      couponStats: null,
     });
   });
 
   it("preserves a null price (distinct from 0)", () => {
     const dto = toProductListItemDTO({
       id: "p2",
+      shopify_product_id: "99",
       title: null,
       handle: null,
       product_type: null,
@@ -151,7 +171,8 @@ describe("product list item DTO", () => {
       price: null,
       image_url: null,
       created_at: "2026-06-01T00:00:00Z",
-    });
+    }, { status: "unknown", available: null });
     expect(dto.price).toBeNull();
+    expect(dto.couponStats).toBeNull();
   });
 });

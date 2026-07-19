@@ -8,7 +8,6 @@ import {
   Users,
   Gift,
   Trophy,
-  MessageSquare,
   BarChart3,
   Radio,
   Activity,
@@ -17,6 +16,7 @@ import {
   Menu,
   X,
   ChevronRight,
+  ChevronDown,
   Zap,
   Bell,
   LogOut,
@@ -28,6 +28,7 @@ import {
   Package,
   Award,
   Mail,
+  MessageCircle,
 } from "lucide-react";
 
 import { usePathname } from "next/navigation";
@@ -39,35 +40,67 @@ interface NavItem {
   href: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
+interface NavGroup {
+  icon: typeof LayoutDashboard;
+  label: string;
+  href?: string;
+  children: NavItem[];
+}
+
+type NavEntry = NavItem | NavGroup;
+
+function isNavGroup(entry: NavEntry): entry is NavGroup {
+  return "children" in entry;
+}
+
+const NAV_ITEMS: NavEntry[] = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/m/dashboard" },
-  { icon: Megaphone, label: "Campaigns", href: "/m/campaigns" },
+  {
+    icon: Megaphone,
+    label: "Campaigns",
+    href: "/m/campaigns",
+    children: [{ icon: BarChart3, label: "Analytics", href: "/m/analytics" }],
+  },
   { icon: Trophy, label: "Winners", href: "/m/winners" },
   { icon: Gift, label: "Rewards", href: "/m/rewards" },
   { icon: Award, label: "Loyalty", href: "/m/loyalty" },
   { icon: Radio, label: "Sources", href: "/m/sources" },
   { icon: Users, label: "Customers", href: "/m/customers" },
-  { icon: Activity, label: "Activity", href: "/m/activity" },
-  { icon: ShoppingBag, label: "Orders", href: "/m/orders" },
-  { icon: Package, label: "Products", href: "/m/products" },
-  { icon: Store, label: "Shopify", href: "/m/shopify" },
-  { icon: MessageSquare, label: "WhatsApp", href: "/m/whatsapp" },
+  {
+    icon: Store,
+    label: "Shopify",
+    href: "/m/shopify",
+    children: [
+      { icon: ShoppingBag, label: "Orders", href: "/m/orders" },
+      { icon: Package, label: "Products", href: "/m/products" },
+    ],
+  },
   { icon: Mail, label: "Marketing", href: "/m/marketing" },
   { icon: Blocks, label: "Integrations", href: "/m/integrations" },
-  { icon: BarChart3, label: "Analytics", href: "/m/analytics" },
-  { icon: Settings, label: "Settings", href: "#" },
+  {
+    icon: Settings,
+    label: "Settings",
+    children: [{ icon: Activity, label: "Activity", href: "/m/activity" }],
+  },
   { icon: HelpCircle, label: "Help & Support", href: "#" },
 ];
 
-/** The WATI console item is injected right after WhatsApp once WATI is connected. */
+/** The WATI console item is injected after Marketing once WATI is connected. */
 const WATI_NAV_ITEM: NavItem = { icon: Send, label: "WATI", href: "/m/wati" };
 
-function getGreeting(): string {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
-}
+/** Communication module — shown when WACRM is the active WhatsApp provider. */
+const COMMUNICATION_NAV_GROUP: NavGroup = {
+  icon: MessageCircle,
+  label: "Communication",
+  href: "/m/communication/inbox",
+  children: [
+    { icon: MessageCircle, label: "Inbox", href: "/m/communication/inbox" },
+    { icon: Users, label: "Contacts", href: "/m/communication/contacts" },
+    { icon: Megaphone, label: "Broadcast", href: "/m/communication/broadcasts" },
+    { icon: BarChart3, label: "Reports", href: "/m/communication/reports" },
+    { icon: Settings, label: "Settings", href: "/m/communication/settings" },
+  ],
+};
 
 function initials(name: string): string {
   return name
@@ -119,36 +152,50 @@ export function MerchantShell({
   const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [watiConnected, setWatiConnected] = useState(false);
+  const [wacrmConnected, setWacrmConnected] = useState(false);
+  const [shopifyConnected, setShopifyConnected] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const pathname = usePathname();
   const avatarRef = useRef<HTMLDivElement>(null);
 
-  // Reveal the WATI console item only once the tenant has a *successfully*
-  // connected WATI gateway (status "connected" — not "error"/"disconnected").
-  // Best-effort: a failed/401 fetch simply leaves the item hidden (WATI is
-  // still reachable via Integrations). Kept client-side so no page has to
-  // thread the flag through.
+  // Reveal optional nav items (WACRM, WATI, Shopify) after one lightweight
+  // status check. Best-effort: a failed fetch leaves items hidden.
   useEffect(() => {
     let alive = true;
-    fetch("/api/m/integrations/wati", { headers: { Accept: "application/json" } })
+    fetch("/api/m/integrations/nav-status", { headers: { Accept: "application/json" } })
       .then((r) => (r.ok ? r.json() : null))
       .then((json) => {
-        if (alive && json?.ok) {
-          setWatiConnected(json.integration?.status === "connected");
-        }
+        if (!alive || !json?.ok) return;
+        setWatiConnected(json.watiConnected === true);
+        setWacrmConnected(json.wacrmConnected === true);
+        setShopifyConnected(json.shopifyConnected === true);
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, []);
+  }, [pathname]);
 
-  // Inject the WATI console right after WhatsApp (index-independent so adding
-  // nav items above WhatsApp never breaks the insertion point).
+  // Inject WATI after Marketing when connected; inject Communication when WACRM
+  // is connected. Hide Shopify until a store is connected.
   const navItems = (() => {
-    if (!watiConnected) return NAV_ITEMS;
-    const waIdx = NAV_ITEMS.findIndex((i) => i.href === "/m/whatsapp");
-    const at = waIdx === -1 ? NAV_ITEMS.length : waIdx + 1;
-    return [...NAV_ITEMS.slice(0, at), WATI_NAV_ITEM, ...NAV_ITEMS.slice(at)];
+    const items = NAV_ITEMS.filter(
+      (entry) =>
+        shopifyConnected || !(isNavGroup(entry) && entry.label === "Shopify"),
+    );
+
+    const marketingIdx = items.findIndex(
+      (i) => !isNavGroup(i) && i.href === "/m/marketing",
+    );
+    const insertAt = marketingIdx === -1 ? items.length : marketingIdx + 1;
+
+    const injected: NavEntry[] = [];
+    if (wacrmConnected) injected.push(COMMUNICATION_NAV_GROUP);
+    if (watiConnected) injected.push(WATI_NAV_ITEM);
+
+    if (injected.length === 0) return items;
+
+    return [...items.slice(0, insertAt), ...injected, ...items.slice(insertAt)];
   })();
 
   // Close avatar dropdown when clicking outside
@@ -213,7 +260,116 @@ export function MerchantShell({
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {navItems.map(({ icon: Icon, label, href }) => {
+          {navItems.map((entry) => {
+            if (isNavGroup(entry)) {
+              const { icon: Icon, label, href: groupHref, children } = entry;
+              const groupActive =
+                children.some((child) => pathname.startsWith(child.href)) ||
+                (groupHref ? pathname.startsWith(groupHref) : false);
+              const expanded =
+                openGroups[label] !== undefined ? openGroups[label] : groupActive;
+
+              return (
+                <div key={label}>
+                  {groupHref ? (
+                    <div
+                      className={`
+                        flex items-center rounded-xl transition-all
+                        ${
+                          groupActive
+                            ? "bg-white/10 text-white"
+                            : "text-white/55 hover:text-white hover:bg-white/8"
+                        }
+                      `}
+                    >
+                      <Link
+                        href={groupHref}
+                        onClick={() => setSidebarOpen(false)}
+                        className="flex flex-1 items-center gap-3 px-3 py-2.5 text-sm font-semibold min-w-0"
+                      >
+                        <Icon className="size-4.5 shrink-0" />
+                        <span className="truncate">{label}</span>
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOpenGroups((prev) => ({
+                            ...prev,
+                            [label]: !(prev[label] ?? groupActive),
+                          }))
+                        }
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
+                        className="flex items-center justify-center px-2.5 py-2.5 shrink-0"
+                      >
+                        <ChevronDown
+                          className={`size-3.5 opacity-60 transition-transform ${
+                            expanded ? "rotate-180" : ""
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setOpenGroups((prev) => ({
+                          ...prev,
+                          [label]: !(prev[label] ?? groupActive),
+                        }))
+                      }
+                      aria-expanded={expanded}
+                      className={`
+                        w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all
+                        ${
+                          groupActive
+                            ? "bg-white/10 text-white"
+                            : "text-white/55 hover:text-white hover:bg-white/8"
+                        }
+                      `}
+                    >
+                      <Icon className="size-4.5 shrink-0" />
+                      <span>{label}</span>
+                      <ChevronDown
+                        className={`size-3.5 ml-auto opacity-60 transition-transform ${
+                          expanded ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                  )}
+                  {expanded && (
+                    <div className="mt-0.5 ml-3 pl-3 border-l border-white/10 space-y-0.5">
+                      {children.map(({ icon: ChildIcon, label: childLabel, href }) => {
+                        const active = pathname.startsWith(href);
+                        return (
+                          <Link
+                            key={childLabel}
+                            href={href}
+                            onClick={() => setSidebarOpen(false)}
+                            className={`
+                              flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-semibold transition-all
+                              ${
+                                active
+                                  ? "bg-[#16A34A] text-white shadow-md shadow-green-500/20"
+                                  : "text-white/50 hover:text-white hover:bg-white/8"
+                              }
+                            `}
+                          >
+                            <ChildIcon className="size-4 shrink-0" />
+                            <span>{childLabel}</span>
+                            {active && (
+                              <ChevronRight className="size-3.5 ml-auto opacity-60" />
+                            )}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            const { icon: Icon, label, href } = entry;
             const active = href !== "#" && pathname.startsWith(href);
             return (
               <Link
@@ -336,7 +492,7 @@ export function MerchantShell({
                   {/* Greeting */}
                   <div className="flex-1 min-w-0">
                     <h1 className="text-base lg:text-lg font-black text-[#111827] truncate">
-                      {getGreeting()}, {businessName} 👋
+                      Welcome, {businessName} 👋
                     </h1>
                     <p className="text-[11px] text-[#6B7280] font-medium hidden sm:block">
                       Grow your business by turning walk-ins into repeat customers.

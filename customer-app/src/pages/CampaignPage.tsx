@@ -155,7 +155,14 @@ export default function CampaignPage() {
               Scratch to reveal your prize
             </p>
             <ScratchCard
-              onReveal={() => setStep("revealed")}
+              onReveal={() => {
+                if (result.defer_scratch_event) {
+                  void trackExperience(display.campaign_id, "scratch.completed", {
+                    won: result.won,
+                  });
+                }
+                setStep("revealed");
+              }}
               lowPower={tier === "slow"}
               haptics={experience.haptics_enabled}
             >

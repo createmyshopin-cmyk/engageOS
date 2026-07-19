@@ -5,6 +5,7 @@ import type { TenantRepository } from "@/lib/db/tenant-repository";
 import { ShopifyReadRepository } from "@/server/modules/shopify/read-repository";
 import { toShopifyOverviewDTO, type ShopifyOverviewDTO } from "@/server/modules/shopify/dto";
 import { getShopifyForBusiness, refreshShopifyScopes } from "@/lib/shopify/adapter";
+import { isScopeGranted } from "@/lib/shopify/scopes";
 import type { CouponDropOverviewRow, CouponDropSampleCode } from "@/lib/types";
 
 /**
@@ -66,9 +67,35 @@ export class ShopifyReadService extends Service {
    */
   async refreshScopes(): Promise<{ granted: string[]; live: boolean }> {
     const refreshed = await refreshShopifyScopes(this.businessId);
-    if (refreshed !== null) return { granted: splitScopes(refreshed), live: true };
+    if (refreshed !== null) {
+      const granted = splitScopes(refreshed);
+      if (isScopeGranted("write_discounts", refreshed)) {
+        await this.retryCouponDropActivations().catch(() => {});
+      }
+      return { granted, live: true };
+    }
     // Couldn't refresh (not connected / no credentials) → fall back to stored.
     return this.scopes();
+  }
+
+  /**
+   * Re-run Coupon Drop parent-discount setup for campaigns stuck in error
+   * (typically after write_discounts was granted post-connect).
+   */
+  async retryCouponDropActivations(campaignId?: string): Promise<string[]> {
+    const rows = await this.repo.couponDropOverview();
+    const targets = campaignId
+      ? rows.filter((r) => r.campaign_id === campaignId)
+      : rows.filter((r) => r.pool_status === "error");
+    if (targets.length === 0) return [];
+
+    const { activateCouponDropPool } = await import(
+      "@/lib/shopify/coupon-drop-orchestrator"
+    );
+    for (const row of targets) {
+      await activateCouponDropPool(this.businessId, row.campaign_id);
+    }
+    return targets.map((t) => t.campaign_id);
   }
 
   /**

@@ -55,16 +55,16 @@ type TenantTable =
   | "customers"
   | "plays"
   | "coupons"
+  | "campaign_coupon_configs"
   // Commerce domain (0038) — every row carries business_id NN, so the same
   // auto-scoping applies. Added for the v1 read models (orders/products/shopify).
   | "orders"
   | "order_items"
   | "shopify_products"
+  | "shopify_inventory"
   | "shopify_shops"
   // CDP analytics (0036) — customer_analytics.business_id NN; loyalty read model.
-  | "customer_analytics"
-  // WhatsApp broadcast ledger (0027) — business_id NN. Read-only marketing feed.
-  | "whatsapp_broadcasts";
+  | "customer_analytics";
 
 export class TenantRepository {
   constructor(
@@ -122,6 +122,27 @@ export class TenantRepository {
     }
     const { count, error } = await q;
     if (error) throw new Error(`count(${table}) failed: ${error.message}`);
+    return count ?? 0;
+  }
+
+  /** Latest customers for dashboard lists (newest first). */
+  async recentCustomers(
+    limit = 8
+  ): Promise<{ id: string; name: string; phone: string; created_at: string }[]> {
+    const { data, error } = await this.select("customers", "id, name, phone, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw new Error(`recentCustomers failed: ${error.message}`);
+    return (data ?? []) as unknown as { id: string; name: string; phone: string; created_at: string }[];
+  }
+
+  /** Count customers created on or after an ISO timestamptz (e.g. IST day start). */
+  async countCustomersSince(since: string): Promise<number> {
+    const { count, error } = await this.select("customers", "id", {
+      count: "exact",
+      head: true,
+    }).gte("created_at", since);
+    if (error) throw new Error(`countCustomersSince failed: ${error.message}`);
     return count ?? 0;
   }
 
@@ -215,6 +236,7 @@ export class TenantRepository {
         plays: number;
         wins: number;
         redeemed: number;
+        customers: number;
         wa_sent: number;
         wa_failed: number;
         remaining_coupons: number;
@@ -232,6 +254,7 @@ export class TenantRepository {
         plays: Number(row.plays) || 0,
         wins: Number(row.wins) || 0,
         redeemed: Number(row.redeemed) || 0,
+        customers: Number(row.customers) || 0,
         wa_sent: Number(row.wa_sent) || 0,
         wa_failed: Number(row.wa_failed) || 0,
         remaining_coupons: Number(row.remaining_coupons) || 0,
@@ -304,6 +327,7 @@ export class TenantRepository {
     return ((data ?? []) as any[]).map((row) => ({
       campaign_id: String(row.campaign_id),
       campaign_name: (row.campaign_name as string) ?? "",
+      campaign_slug: (row.campaign_slug as string) ?? "",
       campaign_status: (row.campaign_status as string) ?? "draft",
       pool_status: (row.pool_status as string) ?? "pending",
       pool_last_error: (row.pool_last_error as string) ?? null,
@@ -360,6 +384,24 @@ export class TenantRepository {
       redeemed: Number(row.redeemed) || 0,
       return_visits: Number(row.return_visits) || 0,
     };
+  }
+
+  /** Per-day funnel counts for dashboard charts (last N days, IST buckets). */
+  async businessDailyActivity(days = 7): Promise<
+    { day: string; registrations: number; scratches: number; coupons: number; redemptions: number }[]
+  > {
+    const { data, error } = await this.supabase.rpc("business_daily_activity", {
+      p_business_id: this.businessId,
+      p_days: days,
+    });
+    if (error) throw new Error(`businessDailyActivity failed: ${error.message}`);
+    return ((data ?? []) as any[]).map((r) => ({
+      day: r.day,
+      registrations: Number(r.registrations) || 0,
+      scratches: Number(r.scratches) || 0,
+      coupons: Number(r.coupons) || 0,
+      redemptions: Number(r.redemptions) || 0,
+    }));
   }
 
   /** One campaign's totals from the event log (campaign detail KPIs). */
@@ -829,6 +871,17 @@ export class TenantRepository {
       if (!data) return candidate;
     }
     throw new Error(`Could not find a free slug for ${base}`);
+  }
+
+  /** Whether a campaign slug is already taken globally. */
+  async isCampaignSlugTaken(slug: string): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from("campaigns")
+      .select("id")
+      .eq("slug", slug)
+      .maybeSingle();
+    if (error) throw new Error(`isCampaignSlugTaken failed: ${error.message}`);
+    return !!data;
   }
 
   // ---------- Prizes (scoped through parent campaign) ----------

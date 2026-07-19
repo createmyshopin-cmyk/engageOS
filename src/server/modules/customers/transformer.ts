@@ -57,6 +57,9 @@ export interface CustomerListRow {
   name: string | null;
   email: string | null;
   created_at: string;
+  latest_prize_name: string | null;
+  latest_code: string | null;
+  reward_count: number | null;
 }
 
 export function toListItemDTO(row: CustomerListRow): CustomerListItemDTO {
@@ -66,6 +69,9 @@ export function toListItemDTO(row: CustomerListRow): CustomerListItemDTO {
     name: row.name,
     email: row.email,
     createdAt: row.created_at,
+    latestPrizeName: row.latest_prize_name ?? null,
+    latestCode: row.latest_code ?? null,
+    rewardCount: Number(row.reward_count) || 0,
   };
 }
 

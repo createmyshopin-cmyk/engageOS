@@ -10,6 +10,8 @@
  * bundle self-polls while a job is running so progress ticks without a refresh.
  */
 
+import { useMemo, useState } from "react";
+
 import {
   RefreshCw,
   Loader2,
@@ -24,6 +26,10 @@ import {
   Layers,
   Boxes,
   Ticket,
+  ChevronDown,
+  History,
+  Zap,
+  Hand,
 } from "lucide-react";
 import {
   useShopifySync,
@@ -33,6 +39,15 @@ import type {
   ShopifyResourceSyncStateDTO,
   ShopifySyncJobDTO,
 } from "@/lib/api/types";
+
+const RESOURCE_META: Record<string, { label: string; icon: typeof Users; tone: string }> = {
+  customers: { label: "Customers", icon: Users, tone: "bg-violet-50 text-violet-600" },
+  products: { label: "Products", icon: Package, tone: "bg-blue-50 text-blue-600" },
+  orders: { label: "Orders", icon: ShoppingBag, tone: "bg-amber-50 text-amber-600" },
+  collections: { label: "Collections", icon: Layers, tone: "bg-indigo-50 text-indigo-600" },
+  inventory: { label: "Inventory", icon: Boxes, tone: "bg-cyan-50 text-cyan-600" },
+  discounts: { label: "Discounts", icon: Ticket, tone: "bg-rose-50 text-rose-600" },
+};
 
 const RESOURCES: Array<{ key: string; label: string; icon: typeof Users }> = [
   { key: "customers", label: "Customers", icon: Users },
@@ -56,12 +71,32 @@ function timeAgo(iso: string | null): string {
   return `${days}d ago`;
 }
 
-const STATUS_TONE: Record<string, string> = {
-  completed: "bg-emerald-50 text-emerald-700",
-  running: "bg-blue-50 text-blue-700",
-  queued: "bg-amber-50 text-amber-700",
-  failed: "bg-red-50 text-red-700",
-  cancelled: "bg-neutral-100 text-neutral-500",
+const STATUS_TONE: Record<string, { pill: string; border: string; dot: string }> = {
+  completed: {
+    pill: "bg-emerald-50 text-emerald-700 border-emerald-100",
+    border: "border-l-emerald-500",
+    dot: "bg-emerald-500",
+  },
+  running: {
+    pill: "bg-blue-50 text-blue-700 border-blue-100",
+    border: "border-l-blue-500",
+    dot: "bg-blue-500",
+  },
+  queued: {
+    pill: "bg-amber-50 text-amber-800 border-amber-100",
+    border: "border-l-amber-400",
+    dot: "bg-amber-400",
+  },
+  failed: {
+    pill: "bg-red-50 text-red-700 border-red-100",
+    border: "border-l-red-500",
+    dot: "bg-red-500",
+  },
+  cancelled: {
+    pill: "bg-neutral-100 text-neutral-500 border-neutral-200",
+    border: "border-l-neutral-300",
+    dot: "bg-neutral-400",
+  },
 };
 
 export function ShopifySyncPanel() {
@@ -207,33 +242,159 @@ export function ShopifySyncPanel() {
       </div>
 
       {/* Recent jobs (logs) */}
-      <div className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-neutral-100">
-          <p className="text-xs font-black text-neutral-900">Recent sync jobs</p>
+      <RecentJobsPanel jobs={recentJobs} />
+    </div>
+  );
+}
+
+type JobFilter = "all" | "active" | "done" | "failed";
+
+function RecentJobsPanel({ jobs }: { jobs: ShopifySyncJobDTO[] }) {
+  const [filter, setFilter] = useState<JobFilter>("all");
+  const [expanded, setExpanded] = useState(false);
+
+  const counts = useMemo(
+    () => ({
+      active: jobs.filter((j) => j.status === "queued" || j.status === "running").length,
+      done: jobs.filter((j) => j.status === "completed").length,
+      failed: jobs.filter((j) => j.status === "failed").length,
+    }),
+    [jobs]
+  );
+
+  const filtered = useMemo(() => {
+    const list =
+      filter === "active"
+        ? jobs.filter((j) => j.status === "queued" || j.status === "running")
+        : filter === "done"
+          ? jobs.filter((j) => j.status === "completed")
+          : filter === "failed"
+            ? jobs.filter((j) => j.status === "failed")
+            : jobs;
+    return [...list].sort((a, b) => {
+      const rank = (s: string) =>
+        s === "running" ? 0 : s === "queued" ? 1 : s === "failed" ? 2 : 3;
+      const byStatus = rank(a.status) - rank(b.status);
+      if (byStatus !== 0) return byStatus;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [jobs, filter]);
+
+  const visible = expanded ? filtered : filtered.slice(0, 8);
+  const hidden = filtered.length - visible.length;
+
+  const tabs: Array<{ id: JobFilter; label: string; count?: number }> = [
+    { id: "all", label: "All", count: jobs.length },
+    { id: "active", label: "Active", count: counts.active },
+    { id: "done", label: "Completed", count: counts.done },
+    { id: "failed", label: "Failed", count: counts.failed },
+  ];
+
+  return (
+    <div className="bg-white rounded-3xl border border-neutral-200/80 shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-neutral-100 bg-gradient-to-r from-neutral-50/80 via-white to-white">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-neutral-100 text-neutral-600">
+              <History className="size-4" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-neutral-900">Recent sync jobs</p>
+              <p className="text-[11px] font-medium text-neutral-500">
+                Latest imports from your Shopify store
+              </p>
+            </div>
+          </div>
+          {jobs.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => {
+                    setFilter(tab.id);
+                    setExpanded(false);
+                  }}
+                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-bold transition ${
+                    filter === tab.id
+                      ? "bg-neutral-900 text-white"
+                      : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"
+                  }`}
+                >
+                  {tab.label}
+                  {tab.count != null && tab.count > 0 && (
+                    <span
+                      className={`rounded-full px-1.5 py-px text-[9px] ${
+                        filter === tab.id ? "bg-white/20" : "bg-white"
+                      }`}
+                    >
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        {recentJobs.length === 0 ? (
-          <p className="px-5 py-8 text-center text-xs font-semibold text-neutral-400">
-            No sync jobs yet. Trigger a sync to get started.
+      </div>
+
+      {jobs.length === 0 ? (
+        <div className="px-5 py-12 text-center">
+          <div className="mx-auto flex size-11 items-center justify-center rounded-2xl bg-neutral-100 text-neutral-400">
+            <RefreshCw className="size-5" />
+          </div>
+          <p className="mt-3 text-sm font-bold text-neutral-600">No sync jobs yet</p>
+          <p className="text-xs font-medium text-neutral-400 mt-1">
+            Hit &quot;Sync all now&quot; above to import your store data.
           </p>
-        ) : (
-          <ul className="divide-y divide-neutral-50">
-            {recentJobs.map((job) => (
+        </div>
+      ) : filtered.length === 0 ? (
+        <p className="px-5 py-10 text-center text-xs font-semibold text-neutral-400">
+          No {filter === "all" ? "" : filter} jobs in this view.
+        </p>
+      ) : (
+        <>
+          <ul className="p-3 space-y-2">
+            {visible.map((job) => (
               <JobRow key={job.id} job={job} />
             ))}
           </ul>
-        )}
-      </div>
+          {hidden > 0 && (
+            <div className="px-5 pb-4">
+              <button
+                onClick={() => setExpanded(true)}
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50 py-2.5 text-xs font-bold text-neutral-600 hover:bg-neutral-100 transition"
+              >
+                Show {hidden} more
+                <ChevronDown className="size-4" />
+              </button>
+            </div>
+          )}
+          {expanded && filtered.length > 8 && (
+            <div className="px-5 pb-4">
+              <button
+                onClick={() => setExpanded(false)}
+                className="w-full text-xs font-bold text-neutral-400 hover:text-neutral-600"
+              >
+                Show less
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
 
 function StatusPill({ status }: { status: string | null }) {
-  if (!status) return <span className="text-neutral-300 font-semibold">—</span>;
-  const tone = STATUS_TONE[status] ?? "bg-neutral-100 text-neutral-500";
+  if (!status) return <span className="text-neutral-300 font-semibold text-xs">—</span>;
+  const tone = STATUS_TONE[status] ?? STATUS_TONE.cancelled;
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold ${tone}`}>
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-bold shrink-0 ${tone.pill}`}
+    >
       {status === "completed" && <CheckCircle2 className="size-3" />}
       {status === "running" && <Loader2 className="size-3 animate-spin" />}
+      {status === "queued" && <Clock className="size-3" />}
       {status === "failed" && <AlertTriangle className="size-3" />}
       <span className="capitalize">{status}</span>
     </span>
@@ -241,25 +402,77 @@ function StatusPill({ status }: { status: string | null }) {
 }
 
 function JobRow({ job }: { job: ShopifySyncJobDTO }) {
+  const meta = RESOURCE_META[job.resource] ?? {
+    label: job.resource,
+    icon: Package,
+    tone: "bg-neutral-50 text-neutral-600",
+  };
+  const Icon = meta.icon;
+  const tone = STATUS_TONE[job.status] ?? STATUS_TONE.cancelled;
+  const ModeIcon = job.mode === "manual" ? Hand : Zap;
+  const progressPct =
+    job.total && job.total > 0
+      ? Math.min(100, Math.round((job.processed / job.total) * 100))
+      : null;
+
   return (
-    <li className="px-5 py-3 flex items-center justify-between gap-3">
-      <div className="min-w-0">
-        <p className="text-xs font-bold text-neutral-800 capitalize truncate">
-          {job.resource} <span className="text-neutral-300 font-medium">· {job.mode}</span>
-        </p>
-        <p className="text-[10px] font-semibold text-neutral-400 mt-0.5">
-          {job.processed.toLocaleString()} processed
-          {job.failed > 0 && <span className="text-red-400"> · {job.failed} failed</span>}
-          {job.durationMs != null && <> · {(job.durationMs / 1000).toFixed(1)}s</>}
-          <> · {timeAgo(job.createdAt)}</>
-        </p>
-        {job.error && (
-          <p className="text-[10px] font-semibold text-red-500 mt-0.5 truncate max-w-md">
-            {job.error}
-          </p>
-        )}
+    <li
+      className={`rounded-xl border border-neutral-100 bg-white border-l-[3px] ${tone.border} overflow-hidden`}
+    >
+      <div className="flex items-start gap-3 p-3 sm:p-3.5">
+        <div
+          className={`flex size-10 shrink-0 items-center justify-center rounded-xl ${meta.tone}`}
+        >
+          <Icon className="size-4.5" />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-black text-neutral-900 capitalize">{meta.label}</p>
+            <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-bold text-neutral-500 capitalize">
+              <ModeIcon className="size-2.5" />
+              {job.mode}
+            </span>
+          </div>
+
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-medium text-neutral-500">
+            <span>
+              <strong className="text-neutral-800">{job.processed.toLocaleString()}</strong> processed
+            </span>
+            {job.failed > 0 && (
+              <span className="text-red-600 font-bold">{job.failed} failed</span>
+            )}
+            {job.durationMs != null && (
+              <span>{(job.durationMs / 1000).toFixed(1)}s</span>
+            )}
+            <span className="inline-flex items-center gap-1 text-neutral-400">
+              <Clock className="size-3" />
+              {timeAgo(job.createdAt)}
+            </span>
+          </div>
+
+          {(job.status === "running" || job.status === "queued") && progressPct != null && (
+            <div className="mt-2.5">
+              <div className="h-1.5 rounded-full bg-neutral-100 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    job.status === "running" ? "bg-blue-500" : "bg-amber-400"
+                  }`}
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {job.error && (
+            <p className="mt-2 text-[11px] font-medium text-red-600 leading-relaxed line-clamp-2">
+              {job.error}
+            </p>
+          )}
+        </div>
+
+        <StatusPill status={job.status} />
       </div>
-      <StatusPill status={job.status} />
     </li>
   );
 }
