@@ -31,7 +31,6 @@ interface PlayFlowProps {
 
 function playVictorySound() {
   try {
-    void unlockScratchAudio();
     const AudioContextClass =
       window.AudioContext ||
       (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -440,8 +439,8 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
     setFormError(null);
     track("registration_started");
 
-    // Unlock WebAudio on the same user gesture (required for iOS Safari).
-    void unlockScratchAudio();
+    // Unlock HTMLAudio on the same user gesture (required for iOS Safari).
+    unlockScratchAudio();
     // Instant next screen — never leave the form staring while the API runs.
     setState({ step: "preparing" });
 
@@ -510,7 +509,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
         <WinConfetti active={showConfetti} onDone={hideConfetti} />
         <GoldenAura>
         <ScratchCard
-          soundEnabled={display.experience ? display.experience.sound_enabled : true}
+          soundEnabled
           onReveal={() => {
           setState({ step: "revealed", result });
           if ("defer_scratch_event" in result && result.defer_scratch_event) {

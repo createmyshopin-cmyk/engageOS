@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ScratchAudio } from "@/components/play/scratch-audio";
+import { ScratchAudio, preloadScratchAudio } from "@/components/play/scratch-audio";
 
 interface ScratchCardProps {
   children: React.ReactNode;
@@ -170,6 +170,7 @@ export function ScratchCard({
 
   useEffect(() => {
     audioRef.current = new ScratchAudio();
+    preloadScratchAudio();
     // Card fade-in → shine sweep → pulse cue
     const tEnter = window.setTimeout(() => setEntered(true), 40);
     const tShine = window.setTimeout(() => setShine(true), 420);
@@ -376,7 +377,10 @@ export function ScratchCard({
       lastPos.current = local;
       e.currentTarget.setPointerCapture(e.pointerId);
       haptic(35);
-      if (soundEnabled) void audioRef.current?.start();
+      // play() must stay sync with this gesture — no await
+      if (soundEnabled) {
+        audioRef.current?.start();
+      }
       softErase(local.x, local.y, null);
     },
     [disabled, softErase, soundEnabled]

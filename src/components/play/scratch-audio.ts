@@ -1,200 +1,175 @@
 "use client";
 
 /**
- * Scratch foil SFX from /scratch-fx.mp3 — loops while the finger moves,
- * fades out on pointer up. Works on Chrome, Safari, Firefox, Android, iOS.
+ * Scratch foil SFX from /scratch-fx.mp3.
  *
- * iOS Safari only unlocks AudioContext inside a user gesture. Call
- * unlockScratchAudio() on form submit / first scratch tap.
+ * Uses HTMLAudioElement (not Web Audio decode) so play() can stay inside the
+ * pointerdown user-gesture — required for iOS Safari / Android Chrome.
+ * Call unlockScratchAudio() on form submit to prime autoplay.
  */
-
-type WebkitWindow = Window & {
-  webkitAudioContext?: typeof AudioContext;
-};
 
 const SCRATCH_FX_URL = "/scratch-fx.mp3";
 
-let sharedCtx: AudioContext | null = null;
+let sharedAudio: HTMLAudioElement | null = null;
 let unlocked = false;
-let fxBuffer: AudioBuffer | null = null;
-let fxLoadPromise: Promise<AudioBuffer | null> | null = null;
 
-function getAudioContext(): AudioContext | null {
+function getScratchElement(): HTMLAudioElement | null {
   if (typeof window === "undefined") return null;
-  if (sharedCtx && sharedCtx.state !== "closed") return sharedCtx;
-  const AC =
-    window.AudioContext ||
-    (window as WebkitWindow).webkitAudioContext;
-  if (!AC) return null;
+  if (sharedAudio) return sharedAudio;
+
+  const audio = new Audio(SCRATCH_FX_URL);
+  audio.preload = "auto";
+  audio.loop = true;
+  audio.volume = 0.85;
+  // iOS inline playback (no fullscreen takeover)
+  audio.setAttribute("playsinline", "true");
+  audio.setAttribute("webkit-playsinline", "true");
+  // Do NOT set crossOrigin — it forces a CORS fetch and can block
+  // same-origin /public MP3s that don't send ACAO headers.
+
+  sharedAudio = audio;
+  return audio;
+}
+
+/**
+ * Must run from a click/touch handler (form submit).
+ * Calls play() immediately (no await) so iOS keeps the user-gesture token.
+ */
+export function unlockScratchAudio(): void {
+  const audio = getScratchElement();
+  if (!audio) return;
+
   try {
-    sharedCtx = new AC();
-    return sharedCtx;
+    // Near-silent unlock — avoid muted flag (some browsers stick muted=true)
+    audio.muted = false;
+    audio.volume = 0.01;
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      playPromise
+        .then(() => {
+          audio.pause();
+          try {
+            audio.currentTime = 0;
+          } catch {
+            /* ignore seek errors on some mobile browsers */
+          }
+          audio.volume = 0.85;
+          unlocked = true;
+        })
+        .catch(() => {
+          audio.volume = 0.85;
+          unlocked = true;
+        });
+    } else {
+      audio.pause();
+      audio.volume = 0.85;
+      unlocked = true;
+    }
   } catch {
-    return null;
-  }
-}
-
-async function loadScratchFxBuffer(ctx: AudioContext): Promise<AudioBuffer | null> {
-  if (fxBuffer) return fxBuffer;
-  if (fxLoadPromise) return fxLoadPromise;
-
-  fxLoadPromise = (async () => {
-    try {
-      const res = await fetch(SCRATCH_FX_URL, { cache: "force-cache" });
-      if (!res.ok) return null;
-      const raw = await res.arrayBuffer();
-      const decoded = await ctx.decodeAudioData(raw.slice(0));
-      fxBuffer = decoded;
-      return decoded;
-    } catch {
-      return null;
-    } finally {
-      // Allow retry if first attempt failed before decode completed
-      if (!fxBuffer) fxLoadPromise = null;
-    }
-  })();
-
-  return fxLoadPromise;
-}
-
-/** Synthetic foil noise — only used if the MP3 cannot be decoded. */
-function makeNoiseBuffer(ctx: AudioContext): AudioBuffer {
-  const len = Math.max(1, Math.floor(ctx.sampleRate * 0.5));
-  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const data = buf.getChannelData(0);
-  let last = 0;
-  for (let i = 0; i < len; i++) {
-    const white = Math.random() * 2 - 1;
-    last = (last + 0.028 * white) / 1.028;
-    data[i] = Math.max(-1, Math.min(1, last * 3.2));
-  }
-  return buf;
-}
-
-/** Resume / unlock audio + prefetch MP3 — must run from a click/touch handler on iOS. */
-export async function unlockScratchAudio(): Promise<void> {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  try {
-    if (ctx.state === "suspended") {
-      await ctx.resume();
-    }
-    // Silent buffer primes iOS hardware path
-    const buf = ctx.createBuffer(1, 1, 22050);
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
-    src.start(0);
+    audio.volume = 0.85;
     unlocked = true;
-    // Warm the real scratch FX so the first stroke has no delay
-    void loadScratchFxBuffer(ctx);
-  } catch {
-    /* ignore — will retry on scratch */
   }
 }
 
 export class ScratchAudio {
-  private gain: GainNode | null = null;
-  private source: AudioBufferSourceNode | null = null;
-  private playing = false;
   private fadeTimer: number | null = null;
-  /** Louder for real MP3; still soft enough for mobile speakers. */
-  private readonly targetVol = 0.55;
+  private playing = false;
 
   static unlock = unlockScratchAudio;
 
-  async start() {
+  /**
+   * Start looping scratch FX. Keep this sync (no await) so the call
+   * stays inside the pointerdown gesture on iOS/Android.
+   */
+  start() {
     if (typeof window === "undefined") return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
     if (this.fadeTimer != null) {
       window.clearTimeout(this.fadeTimer);
       this.fadeTimer = null;
     }
 
-    const ctx = getAudioContext();
-    if (!ctx) return;
+    const audio = getScratchElement();
+    if (!audio) return;
 
-    try {
-      if (ctx.state === "suspended") {
-        await ctx.resume();
+    audio.muted = false;
+    audio.volume = 0.85;
+
+    // If still paused, kick play() now (user gesture).
+    if (audio.paused || audio.ended) {
+      const p = audio.play();
+      if (p) {
+        p.then(() => {
+          this.playing = true;
+          unlocked = true;
+        }).catch(() => {
+          // One more unlock attempt then play (still in gesture chain if sync path)
+          this.playing = false;
+        });
+      } else {
+        this.playing = true;
       }
-      if (!unlocked) {
-        await unlockScratchAudio();
-      }
-    } catch {
-      return;
-    }
-
-    // Already looping — just bring volume back up
-    if (this.playing && this.gain) {
-      this.gain.gain.cancelScheduledValues(ctx.currentTime);
-      this.gain.gain.setTargetAtTime(this.targetVol, ctx.currentTime, 0.03);
-      return;
-    }
-
-    const buffer = (await loadScratchFxBuffer(ctx)) ?? makeNoiseBuffer(ctx);
-
-    try {
-      const gain = ctx.createGain();
-      gain.gain.value = 0;
-      gain.connect(ctx.destination);
-
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
-      // Slightly faster playback = snappier foil feel while dragging
-      source.playbackRate.value = buffer === fxBuffer ? 1.05 : 1;
-      source.connect(gain);
-      source.start(0);
-
-      gain.gain.setTargetAtTime(this.targetVol, ctx.currentTime, 0.035);
-
-      this.gain = gain;
-      this.source = source;
+    } else {
       this.playing = true;
-    } catch {
-      this.playing = false;
     }
   }
 
-  /** Keep the loop audible while the finger is moving. */
+  /** Keep audible while the finger is moving. */
   keepAlive() {
-    const ctx = getAudioContext();
-    if (!this.playing || !ctx || !this.gain) return;
-    if (ctx.state === "suspended") {
-      void ctx.resume();
+    const audio = getScratchElement();
+    if (!audio) return;
+    audio.muted = false;
+    audio.volume = 0.85;
+    if (audio.paused) {
+      void audio.play().catch(() => {});
     }
-    this.gain.gain.cancelScheduledValues(ctx.currentTime);
-    this.gain.gain.setTargetAtTime(this.targetVol, ctx.currentTime, 0.02);
+    this.playing = true;
   }
 
   stop() {
-    const ctx = getAudioContext();
-    if (!this.playing || !ctx || !this.gain || !this.source) return;
-    const gain = this.gain;
-    const source = this.source;
+    const audio = getScratchElement();
+    if (!audio) return;
 
-    gain.gain.cancelScheduledValues(ctx.currentTime);
-    gain.gain.setTargetAtTime(0, ctx.currentTime, 0.03);
+    // Soft stop: pause quickly so the next stroke can restart cleanly
+    if (this.fadeTimer != null) {
+      window.clearTimeout(this.fadeTimer);
+    }
 
     this.fadeTimer = window.setTimeout(() => {
       try {
-        source.stop();
-        source.disconnect();
-        gain.disconnect();
+        if (!audio.paused) audio.pause();
       } catch {
-        /* already stopped */
+        /* ignore */
       }
-      this.source = null;
-      this.gain = null;
       this.playing = false;
       this.fadeTimer = null;
-    }, 120);
+    }, 40);
   }
 
   dispose() {
-    this.stop();
-    if (this.fadeTimer != null) window.clearTimeout(this.fadeTimer);
+    if (this.fadeTimer != null) {
+      window.clearTimeout(this.fadeTimer);
+      this.fadeTimer = null;
+    }
+    const audio = getScratchElement();
+    if (audio && !audio.paused) {
+      try {
+        audio.pause();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.playing = false;
+  }
+}
+
+/** Create the element and start network buffering (no play — safe outside gestures). */
+export function preloadScratchAudio(): void {
+  const audio = getScratchElement();
+  if (!audio) return;
+  try {
+    audio.load();
+  } catch {
+    /* ignore */
   }
 }
