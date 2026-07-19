@@ -225,6 +225,42 @@ body {
   background-size: 20px 20px;
 }
 
+/* ---------- Preparing / Just a moment bridge ---------- */
+
+@keyframes play-prepare-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes play-prepare-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+.play-prepare-spin {
+  animation: play-prepare-spin 0.85s linear infinite;
+}
+
+.play-prepare-dot {
+  animation: play-prepare-dot 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .play-prepare-spin,
+  .play-prepare-dot {
+    animation: none !important;
+  }
+}
+
 /* ---------- Customer play page motion (transform/opacity only) ---------- */
 
 @keyframes play-fade-up {
@@ -420,6 +456,8 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .play-prepare-spin,
+  .play-prepare-dot,
   .play-fade-up,
   .play-logo-float,
   .play-sparkle,

@@ -11,9 +11,14 @@ interface ScratchCardProps {
   soundEnabled?: boolean;
 }
 
-const REVEAL_THRESHOLD = 0.7;
-const BRUSH = 40; // 35–45px soft circular brush
+/** Reveal after this many distinct finger strokes (down → drag → up). */
+const STROKES_TO_REVEAL = 4;
+/** Ignore tiny taps — stroke must travel at least this many CSS px. */
+const MIN_STROKE_DISTANCE = 48;
+const BRUSH = 42;
 const SAMPLE_STEP = 10;
+/** Soft auto-reveal if user scratches a lot without lifting (fallback). */
+const COVERAGE_FALLBACK = 0.82;
 
 interface Dust {
   x: number;
@@ -131,8 +136,8 @@ function paintGoldFoil(ctx: CanvasRenderingContext2D, w: number, h: number) {
 }
 
 /**
- * Premium gold-foil scratch card — soft anti-aliased brush, foil SFX,
- * gold dust, auto-reveal at ~68%, mobile-first pointer events.
+ * Premium gold-foil scratch card — soft brush, cross-platform foil SFX,
+ * gold dust, reveal after ~4 scratch strokes (mobile-first).
  */
 export function ScratchCard({
   children,
@@ -146,7 +151,8 @@ export function ScratchCard({
   const scratching = useRef(false);
   const revealed = useRef(false);
   const lastPos = useRef<{ x: number; y: number } | null>(null);
-  const totalDistance = useRef(0);
+  const strokeDistance = useRef(0);
+  const strokeCount = useRef(0);
   const moveTicks = useRef(0);
   const dust = useRef<Dust[]>([]);
   const dustRaf = useRef(0);
@@ -160,6 +166,7 @@ export function ScratchCard({
   const [entered, setEntered] = useState(false);
   const [showCue, setShowCue] = useState(true);
   const [shine, setShine] = useState(false);
+  const [strokesDone, setStrokesDone] = useState(0);
 
   useEffect(() => {
     audioRef.current = new ScratchAudio();
@@ -329,7 +336,7 @@ export function ScratchCard({
     window.setTimeout(() => onReveal(), 80);
   }, [onReveal]);
 
-  const checkCoverage = useCallback(() => {
+  const checkCoverageFallback = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || revealed.current) return;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -345,7 +352,7 @@ export function ScratchCard({
         if (data[(y * width + x) * 4 + 3] < 48) cleared++;
       }
     }
-    if (total > 0 && cleared / total >= REVEAL_THRESHOLD) {
+    if (total > 0 && cleared / total >= COVERAGE_FALLBACK) {
       finishReveal();
     }
   }, [finishReveal]);
@@ -362,13 +369,14 @@ export function ScratchCard({
       if (disabled || revealed.current) return;
       e.preventDefault();
       scratching.current = true;
+      strokeDistance.current = 0;
       setActive(true);
       setShowCue(false);
       const local = toLocal(e.clientX, e.clientY);
       lastPos.current = local;
       e.currentTarget.setPointerCapture(e.pointerId);
-      haptic(40);
-      if (soundEnabled) audioRef.current?.start();
+      haptic(35);
+      if (soundEnabled) void audioRef.current?.start();
       softErase(local.x, local.y, null);
     },
     [disabled, softErase, soundEnabled]
@@ -382,25 +390,21 @@ export function ScratchCard({
       const local = toLocal(e.clientX, e.clientY);
       const prev = lastPos.current;
       const dist = prev ? Math.hypot(local.x - prev.x, local.y - prev.y) : 0;
-      totalDistance.current += dist;
+      strokeDistance.current += dist;
 
       softErase(local.x, local.y, prev);
       lastPos.current = local;
 
       moveTicks.current += 1;
-      if (moveTicks.current % 4 === 0 && soundEnabled) {
+      if (moveTicks.current % 3 === 0 && soundEnabled) {
         audioRef.current?.keepAlive();
       }
-      // Sample coverage periodically while dragging
-      if (moveTicks.current % 8 === 0) {
-        checkCoverage();
-      }
-
-      if (totalDistance.current > 220) {
-        checkCoverage();
+      // Heavy continuous scratch without lifting still reveals
+      if (moveTicks.current % 12 === 0) {
+        checkCoverageFallback();
       }
     },
-    [checkCoverage, disabled, softErase, soundEnabled]
+    [checkCoverageFallback, disabled, softErase, soundEnabled]
   );
 
   const handlePointerUp = useCallback(
@@ -411,9 +415,22 @@ export function ScratchCard({
       setActive(false);
       lastPos.current = null;
       audioRef.current?.stop();
-      checkCoverage();
+
+      // Count a real stroke only if the finger actually moved
+      if (strokeDistance.current >= MIN_STROKE_DISTANCE && !revealed.current) {
+        strokeCount.current += 1;
+        const n = strokeCount.current;
+        setStrokesDone(Math.min(n, STROKES_TO_REVEAL));
+        haptic(n >= STROKES_TO_REVEAL ? [40, 30, 50] : 25);
+        if (n >= STROKES_TO_REVEAL) {
+          finishReveal();
+          return;
+        }
+      }
+      strokeDistance.current = 0;
+      checkCoverageFallback();
     },
-    [checkCoverage]
+    [checkCoverageFallback, finishReveal]
   );
 
   const keyboardReveal = useCallback(
@@ -451,7 +468,7 @@ export function ScratchCard({
         ref={canvasRef}
         role="button"
         tabIndex={0}
-        aria-label="Scratch card — rub or press Enter to reveal your reward"
+        aria-label="Scratch card — scratch 4 times to reveal your reward"
         className={`absolute inset-0 touch-none select-none outline-none transition-[opacity,transform,filter] duration-[720ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${
           done
             ? "pointer-events-none scale-[1.04] opacity-0 blur-md"
@@ -470,7 +487,7 @@ export function ScratchCard({
         <div className="play-foil-shine pointer-events-none absolute inset-0" aria-hidden />
       )}
 
-      {/* Scratch Here pulse cue */}
+      {/* Scratch Here pulse cue + stroke progress */}
       {showCue && !done && (
         <div
           className="pointer-events-none absolute inset-0 z-[2] flex flex-col items-center justify-center"
@@ -480,8 +497,29 @@ export function ScratchCard({
             Scratch Here 👆
           </p>
           <p className="mt-1.5 text-[11px] font-medium text-white/90">
-            ◆ Reveal your special offer ◆
+            ◆ Scratch 4 times to reveal ◆
           </p>
+        </div>
+      )}
+
+      {!done && strokesDone > 0 && strokesDone < STROKES_TO_REVEAL && (
+        <div
+          className="pointer-events-none absolute bottom-4 left-0 right-0 z-[2] flex justify-center"
+          aria-live="polite"
+        >
+          <div className="flex items-center gap-1.5 rounded-full bg-black/35 px-3 py-1.5 backdrop-blur-sm">
+            {Array.from({ length: STROKES_TO_REVEAL }, (_, i) => (
+              <span
+                key={i}
+                className={`size-2 rounded-full transition-colors duration-200 ${
+                  i < strokesDone ? "bg-amber-300" : "bg-white/35"
+                }`}
+              />
+            ))}
+            <span className="ml-1 text-[10px] font-semibold text-white/95">
+              {strokesDone}/{STROKES_TO_REVEAL}
+            </span>
+          </div>
         </div>
       )}
 

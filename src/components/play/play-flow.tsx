@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Check, User } from "lucide-react";
 import { ScratchCard } from "@/components/play/scratch-card";
+import { unlockScratchAudio } from "@/components/play/scratch-audio";
 import { TrustBar } from "@/components/play/trust-bar";
 import { WinConfetti } from "@/components/play/win-confetti";
 import { ClaimHintCard, WinRevealCard } from "@/components/play/win-reveal";
@@ -30,43 +31,51 @@ interface PlayFlowProps {
 
 function playVictorySound() {
   try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    void unlockScratchAudio();
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
     if (ctx.state === "suspended") {
-      ctx.resume();
+      void ctx.resume();
     }
     const now = ctx.currentTime;
-    
+
     const playNote = (freq: number, start: number, duration: number) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      
+
       osc.type = "sine";
       osc.frequency.setValueAtTime(freq, start);
-      
+
       gain.gain.setValueAtTime(0, start);
       gain.gain.linearRampToValueAtTime(0.2, start + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
-      
+
       osc.connect(gain);
       gain.connect(ctx.destination);
-      
+
       osc.start(start);
       osc.stop(start + duration);
     };
 
-    // Beautiful victory chime arpeggio: E5, G5, C6
+    // Victory chime: E5, G5, C6
     playNote(659.25, now, 0.4);
     playNote(783.99, now + 0.08, 0.4);
-    playNote(1046.50, now + 0.16, 0.6);
-  } catch (err) {
-    console.error("Failed to play sound:", err);
+    playNote(1046.5, now + 0.16, 0.6);
+
+    window.setTimeout(() => {
+      void ctx.close();
+    }, 900);
+  } catch {
+    /* ignore unsupported audio */
   }
 }
 
 type Step =
   | { step: "form" }
+  | { step: "preparing" }
   | { step: "scratch"; result: Extract<PlayResult, { status: "ok" }> }
   | { step: "revealed"; result: Extract<PlayResult, { status: "ok" }> }
   | { step: "blocked"; reason: "already_played" | "campaign_inactive" | "campaign_full" | "rate_limited" };
@@ -169,6 +178,46 @@ function claimInstruction(result: WinResult, endsAt: string): { primary: string;
 /** Whether this prize type shows a redeemable coupon/voucher code. */
 function hasCode(type: PrizeType): boolean {
   return type === "coupon" || type === "gift_voucher";
+}
+
+/**
+ * Short “Just a moment” bridge while /api/play runs.
+ * Feels instant when the network is fast; never leaves a blank gap.
+ */
+function PreparingCard({ businessName }: { businessName: string }) {
+  return (
+    <div
+      className="play-fade-up flex flex-col items-center justify-center rounded-2xl bg-white px-6 py-12 text-center shadow-md ring-1 ring-black/5"
+      role="status"
+      aria-live="polite"
+      aria-label="Preparing your scratch card"
+    >
+      <div className="relative mb-5 flex size-16 items-center justify-center">
+        <span
+          className="absolute inset-0 rounded-full bg-gradient-to-br from-orange-400 to-amber-300 opacity-30 blur-md"
+          aria-hidden
+        />
+        <span
+          className="play-prepare-spin absolute inset-0 rounded-full border-[3px] border-orange-200 border-t-orange-500"
+          aria-hidden
+        />
+        <span className="relative text-2xl" aria-hidden>
+          🎁
+        </span>
+      </div>
+      <p className="text-lg font-extrabold tracking-tight text-neutral-900">
+        Just a moment…
+      </p>
+      <p className="mt-1.5 max-w-[240px] text-sm text-neutral-500">
+        Preparing your scratch card from {businessName}
+      </p>
+      <div className="mt-6 flex gap-1.5" aria-hidden>
+        <span className="play-prepare-dot size-1.5 rounded-full bg-orange-400" />
+        <span className="play-prepare-dot size-1.5 rounded-full bg-orange-400 [animation-delay:150ms]" />
+        <span className="play-prepare-dot size-1.5 rounded-full bg-orange-400 [animation-delay:300ms]" />
+      </div>
+    </div>
+  );
 }
 
 /** Fire-and-forget experience event beacon (best-effort, never blocks UI). */
@@ -391,6 +440,11 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
     setFormError(null);
     track("registration_started");
 
+    // Unlock WebAudio on the same user gesture (required for iOS Safari).
+    void unlockScratchAudio();
+    // Instant next screen — never leave the form staring while the API runs.
+    setState({ step: "preparing" });
+
     try {
       const res = await fetch("/api/play", {
         method: "POST",
@@ -412,6 +466,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
         | { ok: false; error: string; fields?: FieldErrors };
 
       if (!data.ok) {
+        setState({ step: "form" });
         setFieldErrors(data.fields ?? {});
         setFormError(data.fields ? null : data.error);
         return;
@@ -426,10 +481,15 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
         setState({ step: "blocked", reason: result.status });
       }
     } catch {
+      setState({ step: "form" });
       setFormError("Network problem. Check your connection and try again.");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (state.step === "preparing") {
+    return <PreparingCard businessName={display.business_name} />;
   }
 
   if (state.step === "blocked") {
@@ -721,7 +781,7 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
         disabled={submitting}
         className="w-full rounded-xl bg-gradient-to-r from-orange-500 to-red-500 py-3.5 text-base font-semibold text-white shadow-sm transition active:brightness-95 disabled:opacity-60"
       >
-        {submitting ? "Getting your card…" : "Scratch & Win 🎁"}
+        {submitting ? "Just a moment…" : "Scratch & Win 🎁"}
       </button>
     </form>
     <TrustBar />
