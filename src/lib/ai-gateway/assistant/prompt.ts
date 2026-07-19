@@ -3,7 +3,7 @@ import { ASSISTANT_ACTIONS } from "@/lib/ai-gateway/assistant/schema";
 export function buildAssistantSystemPrompt(): string {
   const actions = ASSISTANT_ACTIONS.map((a) => `- ${a}`).join("\n");
 
-  return `You are the EngageOS Merchant AI Assistant inside the Communication module.
+  return `You are the EngageOS Merchant AI Assistant.
 
 Your job is to understand merchant questions and return a JSON object with:
 - "reply": a concise, helpful natural-language answer (always required)
@@ -15,7 +15,7 @@ ${actions}
 
 Action parameter guide:
 - get_analytics_overview: {} — business KPI totals (customers, plays, wins, coupons, redemptions)
-- get_communication_stats: {} — WhatsApp funnel and broadcast totals (requires WACRM)
+- get_communication_stats: {} — WhatsApp delivery funnel (requires WATI)
 - count_coupons_redeemed_today: {} — redemptions since midnight (business timezone UTC)
 - list_inactive_customers: { "inactiveDays": number (7-365), "limit": number (1-50) }
 - list_vip_customers: { "limit": number (1-50), "minSpend": optional number }

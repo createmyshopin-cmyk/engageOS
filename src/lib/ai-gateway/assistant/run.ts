@@ -5,12 +5,10 @@ import { AIGateway } from "@/lib/ai-gateway/gateway";
 import type { ChatMessage } from "@/lib/ai-gateway/types";
 import {
   executeAssistantAction,
-  confirmAssistantBroadcast,
 } from "@/lib/ai-gateway/assistant/actions";
 import { buildAssistantSystemPrompt } from "@/lib/ai-gateway/assistant/prompt";
 import {
   assistantPlanSchema,
-  confirmBroadcastSchema,
   type AssistantActionResult,
 } from "@/lib/ai-gateway/assistant/schema";
 
@@ -91,17 +89,5 @@ export async function runMerchantAssistant(
     actionResult,
     provider: completion.provider,
     model: completion.model,
-  };
-}
-
-export async function runAssistantBroadcastConfirm(
-  repo: TenantRepository,
-  raw: unknown
-): Promise<{ reply: string; launch: { broadcastId: string; accepted: number; rejected: number } }> {
-  const parsed = confirmBroadcastSchema.parse(raw);
-  const launch = await confirmAssistantBroadcast(repo, parsed);
-  return {
-    reply: `Broadcast launched to ${launch.accepted} recipient${launch.accepted === 1 ? "" : "s"} (${launch.rejected} rejected).`,
-    launch,
   };
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import { ShopifyApiError, ShopifyClient } from "@/lib/shopify/client";
-import { decryptSecret, encryptSecret } from "@/lib/wacrm/crypto";
+import { decryptSecret, encryptSecret } from "@/lib/security/secrets";
 import {
   deleteShop,
   getShop,

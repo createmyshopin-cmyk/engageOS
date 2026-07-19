@@ -1,7 +1,7 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { adminClient } from "@/lib/db/rpc";
-import { decryptSecret } from "@/lib/wacrm/crypto";
+import { decryptSecret } from "@/lib/security/secrets";
 
 /**
  * Shopify webhook security + tenant resolution.

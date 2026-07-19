@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { adminClient as supabaseAdmin } from "@/lib/db/rpc";
-import { isDeliverableUrl } from "@/lib/wacrm/webhooks/ssrf";
+import { isDeliverableUrl } from "@/lib/security/ssrf";
 import type { ZapierEvent } from "@/lib/zapier/events";
 
 export const DELIVERY_TIMEOUT_MS = 5000;

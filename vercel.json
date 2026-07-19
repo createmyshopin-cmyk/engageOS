@@ -3,10 +3,6 @@
     {
       "path": "/api/shopify/cron",
       "schedule": "17 2 * * *"
-    },
-    {
-      "path": "/api/communication/cron",
-      "schedule": "45 3 * * *"
     }
   ]
 }

@@ -4,7 +4,7 @@ import { playRequestSchema, normalizeSource } from "@/lib/validation";
 import { playCampaign } from "@/lib/db/rpc";
 import { clientIpFromHeaders } from "@/lib/ip";
 import { guardPlayRequest } from "@/lib/play/abuse-guard";
-import { syncPlayResult } from "@/lib/communication/gateway";
+import { syncPlayResult } from "@/lib/whatsapp/gateway";
 import { setWhatsAppConsentByPhone } from "@/lib/whatsapp/consent";
 import { finalizeCouponDropPlay } from "@/lib/shopify/coupon-drop-orchestrator";
 import type { PlayResult } from "@/lib/types";
@@ -106,54 +106,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
         name: parsed.data.name,
         result,
       });
-
-      if (result.status === "ok") {
-        const { enqueueCommunicationJob } = await import("@/lib/communication/outbox");
-        const { CommunicationEvents } = await import("@/lib/communication/events");
-
-        const { data: customer } = await adminClient()
-          .from("customers")
-          .select("id")
-          .eq("business_id", business.id)
-          .eq("phone", parsed.data.phone)
-          .maybeSingle<{ id: string }>();
-
-        const { data: campaign } = await adminClient()
-          .from("campaigns")
-          .select("id")
-          .eq("business_id", business.id)
-          .eq("slug", parsed.data.campaignSlug)
-          .maybeSingle<{ id: string }>();
-
-        if (customer) {
-          await enqueueCommunicationJob({
-            businessId: business.id,
-            eventType: CommunicationEvents.CUSTOMER_REGISTERED,
-            dedupKey: `customer.registered:${customer.id}`,
-            payload: {
-              customerId: customer.id,
-              phone: parsed.data.phone,
-              customerName: parsed.data.name,
-              campaignId: campaign?.id ?? null,
-            },
-          });
-        }
-
-        if (result.won && !result.coupon_code) {
-          await enqueueCommunicationJob({
-            businessId: business.id,
-            eventType: CommunicationEvents.REWARD_WON,
-            dedupKey: `reward.won:${customer?.id ?? parsed.data.phone}:${parsed.data.campaignSlug}`,
-            payload: {
-              customerId: customer?.id,
-              phone: parsed.data.phone,
-              customerName: parsed.data.name,
-              campaignId: campaign?.id ?? null,
-              prizeName: "prize_name" in result ? result.prize_name : "Prize",
-            },
-          });
-        }
-      }
     });
 
     return NextResponse.json({ ok: true, result });

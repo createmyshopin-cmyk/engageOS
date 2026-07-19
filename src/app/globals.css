@@ -54,9 +54,7 @@
   }
 }
 
-/* ---------- Branded customer preloader ---------- */
-/* GPU-accelerated, CSS-only. Every animated property is transform/opacity
-   so the compositor can hold 60fps on low-end Android. */
+/* ---------- Branded customer preloader (premium splash) ---------- */
 
 .preloader {
   position: fixed;
@@ -65,60 +63,101 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fffbeb;
-  opacity: 1;
-  /* fade handled by a class toggle so the overlay can leave the paint layer */
-  transition: opacity 320ms ease;
-  will-change: opacity;
+  background: radial-gradient(ellipse 80% 60% at 50% 30%, #fff9f0 0%, #fff7ed 45%, #ffedd5 100%);
+  overflow: hidden;
 }
 
-.preloader--hidden {
-  opacity: 0;
+.preloader--premium {
+  will-change: opacity, transform, filter;
+}
+
+.preloader__glow {
+  background: radial-gradient(circle, rgba(234, 179, 8, 0.55) 0%, rgba(249, 115, 22, 0.15) 55%, transparent 70%);
+  filter: blur(18px);
+}
+
+.preloader__ring {
+  background: conic-gradient(from 0deg, #E8B923, #F59E0B, #FDE68A, #E8B923, #B45309, #E8B923);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
+  opacity: 0.85;
+}
+
+.preloader__mandala {
   pointer-events: none;
+  position: absolute;
+  border-radius: 9999px;
+  border: 1px solid rgba(180, 83, 9, 0.08);
+  opacity: 0.5;
 }
 
+.preloader__mandala::before,
+.preloader__mandala::after {
+  content: "";
+  position: absolute;
+  inset: 12%;
+  border-radius: 9999px;
+  border: 1px solid rgba(180, 83, 9, 0.07);
+}
+
+.preloader__mandala::after {
+  inset: 28%;
+}
+
+.preloader__mandala--top {
+  width: min(70vw, 340px);
+  height: min(70vw, 340px);
+  top: 6%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.preloader__mandala--br {
+  width: min(50vw, 220px);
+  height: min(50vw, 220px);
+  right: -8%;
+  bottom: 18%;
+  opacity: 0.35;
+}
+
+.preloader__waves {
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28%;
+  background:
+    radial-gradient(ellipse 120% 80% at 20% 100%, rgba(249, 115, 22, 0.35), transparent 55%),
+    radial-gradient(ellipse 100% 70% at 70% 110%, rgba(251, 191, 36, 0.4), transparent 50%),
+    radial-gradient(ellipse 90% 60% at 50% 120%, rgba(234, 88, 12, 0.25), transparent 45%);
+}
+
+.preloader__particle {
+  pointer-events: none;
+  z-index: 2;
+  filter: drop-shadow(0 1px 2px rgba(180, 83, 9, 0.15));
+}
+
+/* Legacy class hooks kept for reduced-motion / older refs */
 .preloader__logo {
   border-radius: 9999px;
   object-fit: cover;
-  will-change: transform;
-  animation: preloader-glow 1.8s ease-in-out infinite alternate;
 }
 
-/* Soft glow pulse around the merchant logo. box-shadow + subtle scale only. */
-@keyframes preloader-glow {
-  0% {
-    transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.35),
-      0 0 18px 4px rgba(245, 158, 11, 0.18);
-  }
-  100% {
-    transform: scale(1.04);
-    box-shadow: 0 0 0 10px rgba(245, 158, 11, 0),
-      0 0 34px 10px rgba(245, 158, 11, 0.28);
-  }
-}
-
-/* Indeterminate ring spinner. transform-only rotation. */
 .preloader__spinner {
   width: 34px;
   height: 34px;
   border-radius: 9999px;
   border: 3px solid rgba(245, 158, 11, 0.2);
   border-top-color: #f59e0b;
-  will-change: transform;
-  animation: preloader-spin 0.8s linear infinite;
-}
-
-@keyframes preloader-spin {
-  to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .preloader { transition: opacity 160ms ease; }
-  .preloader__logo { animation: none; }
-  .preloader__spinner {
-    animation-duration: 1.6s;
-    border-top-color: rgba(245, 158, 11, 0.6);
+  .preloader__glow,
+  .preloader__ring,
+  .preloader__particle {
+    animation: none !important;
   }
 }
 
@@ -185,4 +224,434 @@ body {
   background-image: radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px);
   background-size: 20px 20px;
 }
+
+/* ---------- Customer play page motion (transform/opacity only) ---------- */
+
+@keyframes play-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes play-logo-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes play-sparkle {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85) rotate(0deg);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15) rotate(12deg);
+  }
+}
+
+@keyframes play-confetti-drift {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(8px) rotate(18deg);
+    opacity: 0.95;
+  }
+}
+
+@keyframes play-shimmer {
+  0% {
+    background-position: -120% 0;
+  }
+  100% {
+    background-position: 220% 0;
+  }
+}
+
+@keyframes play-prize-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.86) translateY(10px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.04) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes play-code-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(249, 115, 22, 0);
+  }
+}
+
+.play-fade-up {
+  animation: play-fade-up 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.play-fade-up--delay {
+  animation-delay: 80ms;
+}
+
+.play-fade-up--delay2 {
+  animation-delay: 160ms;
+}
+
+.play-logo-float {
+  animation: play-logo-float 3.6s ease-in-out infinite;
+}
+
+.play-sparkle {
+  animation: play-sparkle 2.4s ease-in-out infinite;
+}
+
+.play-sparkle--delay {
+  animation-delay: 0.7s;
+}
+
+.play-confetti {
+  animation: play-confetti-drift 3.2s ease-in-out infinite;
+}
+
+.play-confetti--delay {
+  animation-delay: 0.9s;
+}
+
+.play-confetti--slow {
+  animation-delay: 1.4s;
+  animation-duration: 4.2s;
+}
+
+.play-shimmer::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.55) 50%,
+    transparent 60%
+  );
+  background-size: 200% 100%;
+  animation: play-shimmer 3.8s ease-in-out infinite;
+  opacity: 0.35;
+}
+
+.play-prize-pop {
+  animation: play-prize-pop 680ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.play-code-glow {
+  animation: play-code-glow 2.2s ease-in-out infinite;
+}
+
+.play-scratch-shell {
+  animation: play-fade-up 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes play-foil-shine {
+  0% {
+    transform: translateX(-120%) skewX(-12deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: translateX(140%) skewX(-12deg);
+    opacity: 0;
+  }
+}
+
+.play-foil-shine {
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.55) 48%,
+    rgba(255, 248, 200, 0.35) 52%,
+    transparent 70%
+  );
+  animation: play-foil-shine 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes play-scratch-cue {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.88;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+
+.play-scratch-cue {
+  animation: play-scratch-cue 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .play-foil-shine,
+  .play-scratch-cue {
+    animation: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .play-fade-up,
+  .play-logo-float,
+  .play-sparkle,
+  .play-confetti,
+  .play-shimmer::after,
+  .play-prize-pop,
+  .play-code-glow,
+  .play-scratch-shell,
+  .play-coupon-shimmer::after,
+  .play-copy-pulse,
+  .play-gold-float,
+  .play-gold-sparkle,
+  .play-win-confetti-piece,
+  .play-foil-shine,
+  .play-scratch-cue {
+    animation: none !important;
+  }
+}
+
+@keyframes play-coupon-shimmer {
+  /* Brief sweep, then idle until next 4.5s cycle */
+  0%,
+  4% {
+    background-position: -140% 0;
+    opacity: 0;
+  }
+  6% {
+    background-position: -140% 0;
+    opacity: 1;
+  }
+  18% {
+    background-position: 240% 0;
+    opacity: 1;
+  }
+  22%,
+  100% {
+    background-position: 240% 0;
+    opacity: 0;
+  }
+}
+
+@keyframes play-copy-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.85;
+  }
+}
+
+.play-coupon-shimmer::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    105deg,
+    transparent 35%,
+    rgba(255, 255, 255, 0.4) 50%,
+    transparent 65%
+  );
+  background-size: 220% 100%;
+  animation: play-coupon-shimmer 4.5s ease-in-out infinite;
+}
+
+.play-copy-pulse {
+  display: inline-flex;
+  animation: play-copy-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes play-gold-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.35;
+  }
+  35% {
+    transform: translate3d(var(--gold-drift, 8px), -14px, 0) scale(1.15);
+    opacity: 0.95;
+  }
+  70% {
+    transform: translate3d(calc(var(--gold-drift, 8px) * -0.6), -6px, 0) scale(0.9);
+    opacity: 0.55;
+  }
+}
+
+@keyframes play-gold-sparkle {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.75) rotate(0deg);
+  }
+  50% {
+    opacity: 0.9;
+    transform: scale(1.15) rotate(18deg);
+  }
+}
+
+.play-gold-float {
+  will-change: transform, opacity;
+  animation-name: play-gold-float;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+.play-gold-sparkle {
+  will-change: transform, opacity;
+  animation-name: play-gold-sparkle;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+
+@keyframes play-win-confetti-fall {
+  0% {
+    transform: translate3d(0, -10px, 0) rotate(0deg) scale(0.88);
+    opacity: 0;
+  }
+  6% {
+    opacity: 0.72;
+  }
+  94% {
+    opacity: 0.62;
+  }
+  100% {
+    transform: translate3d(var(--confetti-drift, 0px), 105cqh, 0)
+      rotate(var(--confetti-spin, 180deg)) scale(1);
+    opacity: 0;
+  }
+}
+
+.play-win-confetti-piece {
+  position: absolute;
+  will-change: transform, opacity;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.22);
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.play-win-confetti-piece--fall {
+  animation-name: play-win-confetti-fall;
+}
+
+.play-mandala {
+  position: absolute;
+  border-radius: 9999px;
+  border: 1px solid rgba(180, 83, 9, 0.07);
+  opacity: 0.55;
+  animation: play-mandala-spin 48s linear infinite;
+}
+
+.play-mandala::before,
+.play-mandala::after {
+  content: "";
+  position: absolute;
+  inset: 14%;
+  border-radius: 9999px;
+  border: 1px solid rgba(180, 83, 9, 0.06);
+}
+
+.play-mandala::after {
+  inset: 30%;
+}
+
+.play-mandala--tl {
+  width: min(85vw, 380px);
+  height: min(85vw, 380px);
+  top: -8%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.play-mandala--br {
+  width: min(55vw, 260px);
+  height: min(55vw, 260px);
+  right: -12%;
+  bottom: 4%;
+  opacity: 0.35;
+  animation-duration: 64s;
+  animation-direction: reverse;
+}
+
+@keyframes play-mandala-spin {
+  to {
+    transform: translateX(-50%) rotate(360deg);
+  }
+}
+
+.play-mandala--br {
+  animation-name: play-mandala-spin-br;
+}
+
+@keyframes play-mandala-spin-br {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+.play-footer-pulse {
+  animation: play-footer-pulse 2.8s ease-in-out infinite;
+}
+
+@keyframes play-footer-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .play-mandala,
+  .play-footer-pulse {
+    animation: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .play-gold-float,
+  .play-gold-sparkle,
+  .play-win-confetti-piece {
+    animation: none !important;
+    opacity: 0.4;
+  }
+}
+
 

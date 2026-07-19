@@ -28,7 +28,6 @@ import {
   Package,
   Award,
   Mail,
-  MessageCircle,
 } from "lucide-react";
 
 import { usePathname } from "next/navigation";
@@ -88,20 +87,7 @@ const NAV_ITEMS: NavEntry[] = [
 /** The WATI console item is injected after Marketing once WATI is connected. */
 const WATI_NAV_ITEM: NavItem = { icon: Send, label: "WATI", href: "/m/wati" };
 
-/** Communication module — shown when WACRM is the active WhatsApp provider. */
-const COMMUNICATION_NAV_GROUP: NavGroup = {
-  icon: MessageCircle,
-  label: "Communication",
-  href: "/m/communication/inbox",
-  children: [
-    { icon: MessageCircle, label: "Inbox", href: "/m/communication/inbox" },
-    { icon: Users, label: "Contacts", href: "/m/communication/contacts" },
-    { icon: Megaphone, label: "Broadcast", href: "/m/communication/broadcasts" },
-    { icon: BarChart3, label: "Reports", href: "/m/communication/reports" },
-    { icon: Settings, label: "Settings", href: "/m/communication/settings" },
-  ],
-};
-
+/** Communication module removed — WATI uses /m/wati when connected. */
 function initials(name: string): string {
   return name
     .trim()
@@ -152,7 +138,6 @@ export function MerchantShell({
   const [logoutConfirm, setLogoutConfirm] = useState(false);
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [watiConnected, setWatiConnected] = useState(false);
-  const [wacrmConnected, setWacrmConnected] = useState(false);
   const [shopifyConnected, setShopifyConnected] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const pathname = usePathname();
@@ -167,7 +152,6 @@ export function MerchantShell({
       .then((json) => {
         if (!alive || !json?.ok) return;
         setWatiConnected(json.watiConnected === true);
-        setWacrmConnected(json.wacrmConnected === true);
         setShopifyConnected(json.shopifyConnected === true);
       })
       .catch(() => {});
@@ -176,8 +160,7 @@ export function MerchantShell({
     };
   }, [pathname]);
 
-  // Inject WATI after Marketing when connected; inject Communication when WACRM
-  // is connected. Hide Shopify until a store is connected.
+  // Inject WATI after Marketing when connected. Hide Shopify until a store is connected.
   const navItems = (() => {
     const items = NAV_ITEMS.filter(
       (entry) =>
@@ -190,7 +173,6 @@ export function MerchantShell({
     const insertAt = marketingIdx === -1 ? items.length : marketingIdx + 1;
 
     const injected: NavEntry[] = [];
-    if (wacrmConnected) injected.push(COMMUNICATION_NAV_GROUP);
     if (watiConnected) injected.push(WATI_NAV_ITEM);
 
     if (injected.length === 0) return items;

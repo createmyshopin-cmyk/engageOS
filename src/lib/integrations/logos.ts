@@ -4,7 +4,6 @@
  */
 export const INTEGRATION_LOGOS = {
   tracking: "/integrations/ad-tracking.svg",
-  wacrm: "/integrations/whatsapp.png",
   wati: "https://assets.wati.io/cdn-cgi/image/f=auto/images/WATI_logo_full.png",
   twilio: "/integrations/twilio.svg",
   mailchimp: "/integrations/mailchimp.svg",

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { defineRoute } from "@/server/http/handler";
 import { requireScope } from "@/server/auth/guard";
 import { ForbiddenError } from "@/server/core/errors";
-import { isDeliverableUrl } from "@/lib/wacrm/webhooks/ssrf";
+import { isDeliverableUrl } from "@/lib/security/ssrf";
 import { ZAPIER_EVENTS } from "@/lib/zapier/events";
 import { createHookSubscription } from "@/lib/zapier/store";
 

@@ -9,7 +9,7 @@ import { getShop } from "@/lib/shopify/store";
 import { clientIpFromHeaders } from "@/lib/ip";
 import { isSafeRedirectUrl, slugify } from "@/lib/validation";
 import { uploadCampaignImageFromDataUrl } from "@/lib/images/upload-from-data-url";
-import { dispatchPendingCoupons } from "@/lib/communication/gateway";
+import { dispatchPendingCoupons } from "@/lib/whatsapp/gateway";
 import type { CampaignEventType, CampaignStatus } from "@/lib/types";
 import { z } from "zod";
 

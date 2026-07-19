@@ -1,6 +1,6 @@
 import "server-only";
 import { WatiClient } from "@/lib/wati/client";
-import { decryptSecret } from "@/lib/wacrm/crypto";
+import { decryptSecret } from "@/lib/security/secrets";
 import { getWatiIntegration } from "@/lib/wati/store";
 import type { WatiIntegration } from "@/lib/wati/types";
 

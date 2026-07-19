@@ -10,7 +10,7 @@ const { rpc, from } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/db/rpc", () => ({ adminClient: () => ({ rpc, from }) }));
 // crypto.ts pulls an env key at call time; not exercised in these tests.
-vi.mock("@/lib/wacrm/crypto", () => ({ decryptSecret: (s: string) => s }));
+vi.mock("@/lib/security/secrets", () => ({ decryptSecret: (s: string) => s }));
 
 import { verifyShopifyHmac } from "@/server/modules/shopify/webhook-security";
 import { ShopifyIngestionService } from "@/server/modules/shopify/service";

@@ -4,21 +4,13 @@ import { adminClient } from "@/lib/db/rpc";
 import type { TenantRepository } from "@/lib/db/tenant-repository";
 import { AnalyticsRepository } from "@/server/modules/analytics/repository";
 import { toAnalyticsOverviewDTO } from "@/server/modules/analytics/dto";
-import { getWacrmIntegration } from "@/lib/wacrm/store";
-import { requireWacrmTenant } from "@/lib/communication/wacrm-proxy";
-import { insertWhatsappBroadcast } from "@/lib/wacrm/store";
-import { reserveWaQuota, WaQuotaExhaustedError } from "@/lib/communication/quota";
-import {
-  mintBroadcastProposalToken,
-  verifyBroadcastProposalToken,
-} from "@/lib/ai-gateway/assistant/proposal-token";
+import { getWatiIntegration } from "@/lib/wati/store";
 import type {
   AssistantAction,
   AssistantActionResult,
 } from "@/lib/ai-gateway/assistant/schema";
 import {
   inactiveParamsSchema,
-  proposeBroadcastParamsSchema,
   vipParamsSchema,
 } from "@/lib/ai-gateway/assistant/schema";
 
@@ -156,10 +148,10 @@ export async function executeAssistantAction(
     }
 
     case "get_communication_stats": {
-      const integration = await getWacrmIntegration(businessId);
+      const integration = await getWatiIntegration(businessId);
       if (!integration || integration.status === "disconnected") {
         return {
-          summary: "WACRM is not connected — WhatsApp communication stats are unavailable.",
+          summary: "WATI WhatsApp is not connected — delivery stats are unavailable.",
           data: { connected: false },
         };
       }
@@ -181,7 +173,7 @@ export async function executeAssistantAction(
               .select("id", { count: "exact", head: true })
               .eq("business_id", businessId)
               .eq("event_type", eventType)
-              .eq("metadata->>channel", "wacrm");
+              .eq("metadata->>channel", "wati");
             if (error) throw new Error(error.message);
             return [eventType, count ?? 0] as const;
           })
@@ -238,51 +230,10 @@ export async function executeAssistantAction(
     }
 
     case "propose_broadcast": {
-      const params = proposeBroadcastParamsSchema.parse(rawParams);
-      const wacrm = await requireWacrmTenant(businessId);
-      if (!wacrm.ok) {
-        return {
-          summary: "Cannot prepare a broadcast — WACRM is not connected.",
-          data: { connected: false },
-        };
-      }
-
-      const recipients =
-        params.audience === "inactive"
-          ? await listInactiveCustomers(businessId, params.inactiveDays, params.limit)
-          : await listVipCustomers(businessId, params.limit).then((rows) =>
-              rows.map(({ id, name, phone }) => ({ id, name, phone }))
-            );
-
-      const phones = [...new Set(recipients.map((r) => r.phone).filter(Boolean))];
-      const name =
-        params.name ??
-        `${params.audience === "inactive" ? "Win-back" : "VIP"} broadcast ${new Date().toISOString().slice(0, 10)}`;
-
       return {
         summary:
-          phones.length > 0
-            ? `Prepared broadcast to ${phones.length} ${params.audience} customer${phones.length === 1 ? "" : "s"}. Confirm to launch via WhatsApp.`
-            : `No eligible ${params.audience} customers with phone numbers were found.`,
-        data: { recipientCount: phones.length },
-        proposal: {
-          name,
-          templateName: params.templateName,
-          templateLanguage: params.templateLanguage,
-          phones,
-          segment: `assistant:${params.audience}`,
-          audience: params.audience,
-          recipientCount: phones.length,
-          sample: recipients.slice(0, 5).map((r) => ({ name: r.name, phone: r.phone })),
-          proposalToken: mintBroadcastProposalToken({
-            businessId,
-            name,
-            templateLanguage: params.templateLanguage,
-            phones,
-            segment: `assistant:${params.audience}`,
-            audience: params.audience,
-          }),
-        },
+          "Broadcasts are not available — the Communication module was removed. Use WATI templates from Integrations.",
+        data: { connected: false },
       };
     }
 
@@ -291,57 +242,6 @@ export async function executeAssistantAction(
   }
 }
 
-export async function confirmAssistantBroadcast(
-  repo: TenantRepository,
-  input: {
-    proposalToken: string;
-    templateName: string;
-  }
-): Promise<{ broadcastId: string; accepted: number; rejected: number }> {
-  const proposal = verifyBroadcastProposalToken(input.proposalToken, repo.businessId);
-
-  const wacrm = await requireWacrmTenant(repo.businessId);
-  if (!wacrm.ok) {
-    throw new Error("WACRM is not connected");
-  }
-
-  try {
-    await reserveWaQuota(repo.businessId, proposal.phones.length);
-  } catch (err) {
-    if (err instanceof WaQuotaExhaustedError) {
-      throw new Error("WhatsApp message quota exhausted for this broadcast");
-    }
-    throw err;
-  }
-
-  const launch = await wacrm.tenant.client.launchBroadcast({
-    name: proposal.name,
-    template_name: input.templateName,
-    template_language: proposal.templateLanguage,
-    recipients: proposal.phones.map((to) => ({ to })),
-  });
-
-  await insertWhatsappBroadcast(repo.businessId, {
-    wacrm_broadcast_id: launch.broadcast_id,
-    name: proposal.name,
-    template_name: input.templateName,
-    template_language: proposal.templateLanguage,
-    segment: proposal.segment,
-    total_recipients: launch.total_recipients,
-    accepted: launch.accepted,
-    rejected: launch.rejected,
-    status: launch.status,
-  });
-
-  await repo.audit("communication.broadcast", "whatsapp_broadcast", null, {
-    broadcastId: launch.broadcast_id,
-    recipients: launch.accepted,
-    source: "ai_assistant",
-  });
-
-  return {
-    broadcastId: launch.broadcast_id,
-    accepted: launch.accepted,
-    rejected: launch.rejected,
-  };
+export async function confirmAssistantBroadcast(): Promise<never> {
+  throw new Error("Broadcasts are not available — the Communication module was removed.");
 }

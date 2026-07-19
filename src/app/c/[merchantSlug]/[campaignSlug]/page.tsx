@@ -7,6 +7,8 @@ import { guardPlayPageView } from "@/lib/play/abuse-guard";
 import { normalizeSource } from "@/lib/validation";
 import { PlayFlow } from "@/components/play/play-flow";
 import { BrandHeader } from "@/components/play/brand-header";
+import { PrizePreview } from "@/components/play/prize-preview";
+import { PlayAtmosphere } from "@/components/play/play-atmosphere";
 import { Preloader } from "@/components/play/preloader";
 import { TrackingBootstrap } from "@/lib/tracking/react";
 import type { TrackingConfig } from "@/lib/tracking/types";
@@ -152,11 +154,7 @@ export default async function PlayPage({ params, searchParams }: PageProps) {
           headline={display.headline}
         />
 
-        {display.prizes.length > 0 && (
-          <p className="mb-6 text-center text-xs text-neutral-500">
-            Win: {display.prizes.map((p) => p.name).join(" · ")}
-          </p>
-        )}
+        <PrizePreview prizes={display.prizes} />
 
         <PlayFlow
           merchantSlug={merchantSlug}
@@ -165,8 +163,21 @@ export default async function PlayPage({ params, searchParams }: PageProps) {
           source={source}
         />
 
-        <footer className="mt-8 text-center text-[11px] text-neutral-400">
-          Powered by EngageOS
+        <footer className="mt-6 space-y-2 text-center">
+          <div className="play-footer-pulse flex items-center justify-center gap-1.5 text-[11px] font-medium text-amber-800/70">
+            <span aria-hidden>⬡</span>
+            One play per person
+          </div>
+          <p className="text-[10px] leading-relaxed text-neutral-400">
+            By playing you agree to receive offers from {display.business_name} on WhatsApp.
+          </p>
+          <div className="pt-1 text-[10px] text-neutral-400">
+            <span className="text-amber-400">✨</span>
+            {" "}Powered by{" "}
+            <span className="font-semibold text-orange-500">EngageOS</span>
+            {" "}
+            <span className="text-amber-400">✨</span>
+          </div>
         </footer>
       </TrackingBootstrap>
     </Shell>
@@ -175,8 +186,13 @@ export default async function PlayPage({ params, searchParams }: PageProps) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="min-h-dvh bg-amber-50 flex flex-col justify-center items-center">
-      <div className="w-full max-w-md px-4 py-8">{children}</div>
+    <main className="relative min-h-dvh overflow-hidden bg-[#FFF9F1] flex flex-col justify-center items-center">
+      <PlayAtmosphere />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,107,0,0.08),transparent_55%)]"
+      />
+      <div className="relative z-10 w-full max-w-md px-4 py-8">{children}</div>
     </main>
   );
 }

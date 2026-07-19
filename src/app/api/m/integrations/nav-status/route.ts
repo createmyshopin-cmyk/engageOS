@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeMerchantRead } from "@/lib/merchant-route-auth";
 import { getWatiIntegration } from "@/lib/wati/store";
-import { getWacrmIntegration } from "@/lib/wacrm/store";
 import { ShopifyReadRepository } from "@/server/modules/shopify/read-repository";
 
 export const runtime = "nodejs";
@@ -13,16 +12,14 @@ export async function GET(): Promise<NextResponse> {
   const { repo } = auth;
 
   try {
-    const [wati, wacrm, shop] = await Promise.all([
+    const [wati, shop] = await Promise.all([
       getWatiIntegration(repo.businessId),
-      getWacrmIntegration(repo.businessId),
       new ShopifyReadRepository(repo).shop(),
     ]);
 
     return NextResponse.json({
       ok: true,
       watiConnected: wati?.status === "connected",
-      wacrmConnected: !!wacrm && wacrm.status !== "disconnected",
       shopifyConnected: shop != null && shop.status === "active",
     });
   } catch (err) {

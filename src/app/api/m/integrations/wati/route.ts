@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { authorizeMerchantRead, authorizeMerchantWrite } from "@/lib/merchant-route-auth";
-import { encryptSecret } from "@/lib/wacrm/crypto";
+import { encryptSecret } from "@/lib/security/secrets";
 import { WatiClient, WatiApiError } from "@/lib/wati/client";
 import {
   deleteWatiIntegration,
@@ -9,8 +9,7 @@ import {
   patchWatiIntegration,
   upsertWatiIntegration,
 } from "@/lib/wati/store";
-import { deleteWacrmIntegration } from "@/lib/wacrm/store";
-import { assertWhatsAppProviderAvailable } from "@/lib/communication/provider";
+import { assertWhatsAppProviderAvailable } from "@/lib/whatsapp/provider";
 
 export const runtime = "nodejs";
 
@@ -144,8 +143,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    await deleteWacrmIntegration(repo.businessId);
-
     await upsertWatiIntegration(repo.businessId, {
       provider: "wati",
       base_url: normalizedBase,

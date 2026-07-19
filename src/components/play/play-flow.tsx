@@ -1,13 +1,25 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createPortal } from "react-dom";
+import { Check, User } from "lucide-react";
 import { ScratchCard } from "@/components/play/scratch-card";
+import { TrustBar } from "@/components/play/trust-bar";
+import { WinConfetti } from "@/components/play/win-confetti";
+import { ClaimHintCard, WinRevealCard } from "@/components/play/win-reveal";
+import { GoldenAura } from "@/components/play/golden-aura";
 import { getOrCreateDeviceId } from "@/lib/play/device-id";
 import { shopifyDiscountUrl } from "@/lib/shopify/storefront-url";
 import { isSafeRedirectUrl } from "@/lib/validation";
 import { useTracking } from "@/lib/tracking/react";
 import type { CampaignDisplay, PlayResult, PrizeType, RedirectDestinationType } from "@/lib/types";
+
+function WhatsAppIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.85 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z" />
+    </svg>
+  );
+}
 
 interface PlayFlowProps {
   merchantSlug: string;
@@ -82,8 +94,8 @@ const BLOCKED_MESSAGES: Record<
     body: "This campaign has reached its limit. Ask the store about their next offer!",
   },
   rate_limited: {
-    title: "Too many attempts",
-    body: "Please wait a while and try again.",
+    title: "Please wait a moment",
+    body: "Wait 5 seconds before trying again.",
   },
 };
 
@@ -148,7 +160,7 @@ function claimInstruction(result: WinResult, endsAt: string): { primary: string;
     case "coupon":
     default:
       return {
-        primary: "📸 Take a screenshot of this code now",
+        primary: "Take a screenshot of this code now",
         secondary: "Show it at the counter to claim your prize.",
       };
   }
@@ -363,86 +375,13 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
   const [state, setState] = useState<Step>({ step: "form" });
   const [name, setName] = useState("");
   const [showConfetti, setShowConfetti] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (showConfetti && canvasRef.current) {
-      const colors = ["#F59E0B", "#10B981", "#3B82F6", "#EF4444", "#EC4899", "#8B5CF6"];
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      const dpr = window.devicePixelRatio || 1;
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-      ctx.scale(dpr, dpr);
-
-      // Create confetti arcing up from bottom center
-      const particles = Array.from({ length: 140 }).map(() => ({
-        x: w / 2,
-        y: h + 20,
-        size: Math.random() * 8 + 6,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        speedX: (Math.random() - 0.5) * 16,
-        speedY: -Math.random() * 20 - 10,
-        rotation: Math.random() * 360,
-        rotationSpeed: (Math.random() - 0.5) * 10,
-      }));
-
-      let animId: number;
-      function loop() {
-        if (!ctx) return;
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.restore();
-        let alive = false;
-
-        for (const p of particles) {
-          p.x += p.speedX;
-          p.y += p.speedY;
-          p.speedY += 0.5;
-          p.speedX *= 0.98;
-          p.rotation += p.rotationSpeed;
-
-          if (p.y < h + 50) {
-            alive = true;
-          }
-
-          ctx.save();
-          ctx.translate(p.x, p.y);
-          ctx.rotate((p.rotation * Math.PI) / 180);
-          ctx.fillStyle = p.color;
-          ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
-          ctx.restore();
-        }
-
-        if (alive) {
-          animId = requestAnimationFrame(loop);
-        } else {
-          setShowConfetti(false);
-        }
-      }
-
-      animId = requestAnimationFrame(loop);
-      return () => cancelAnimationFrame(animId);
-    }
-  }, [showConfetti]);
-
   const [phone, setPhone] = useState("");
-  const [whatsappConsent, setWhatsappConsent] = useState(false);
+  const [whatsappConsent, setWhatsappConsent] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
+
+  const hideConfetti = useCallback(() => setShowConfetti(false), []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -505,22 +444,27 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
 
   if (state.step === "scratch" || state.step === "revealed") {
     const { result } = state;
+    const revealed = state.step === "revealed";
     return (
       <div className="space-y-4">
-        {showConfetti && mounted && createPortal(
-          <canvas
-            ref={canvasRef}
-            className="fixed inset-0 pointer-events-none z-[9999]"
-          />,
-          document.body
-        )}
-        <ScratchCard onReveal={() => {
+        <WinConfetti active={showConfetti} onDone={hideConfetti} />
+        <GoldenAura>
+        <ScratchCard
+          soundEnabled={display.experience ? display.experience.sound_enabled : true}
+          onReveal={() => {
           setState({ step: "revealed", result });
           if ("defer_scratch_event" in result && result.defer_scratch_event) {
             beacon(display.campaign_id, "scratch.completed", { won: result.won });
           }
           track("scratch_completed");
           if (result.won) {
+            try {
+              if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+                navigator.vibrate(80);
+              }
+            } catch {
+              /* ignore unsupported devices */
+            }
             beacon(display.campaign_id, "reward.viewed", { prizeType: result.prize_type });
             track("reward_won", {
               rewardName: result.prize_name,
@@ -550,78 +494,59 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
           track("campaign_completed", { won: result.won });
         }}>
           {result.won ? (
-            <div
-              className="flex h-full w-full flex-col items-center justify-center p-4 text-center text-white"
-              style={{ backgroundColor: result.prize_background_color ?? "#059669" }}
-            >
-              <p className="text-sm font-medium uppercase tracking-wide">
-                🎉 You won!
-              </p>
-              {result.prize_image_url && (
-                // eslint-disable-next-line @next/next/no-img-element -- customer-facing reward art; skip the optimizer on this hot path
-                <img
-                  src={result.prize_image_url}
-                  alt={result.prize_name}
-                  className="mt-2 h-16 w-16 rounded-xl bg-white/20 object-cover"
-                />
-              )}
-              <p className="mt-1 text-2xl font-bold">{result.prize_name}</p>
-              {hasCode(result.prize_type) && (
-                <p className="mt-2 rounded-lg bg-white/20 px-3 py-1 font-mono text-lg font-bold tracking-wider">
-                  {result.coupon_code}
-                </p>
-              )}
-            </div>
+            <WinRevealCard
+              prizeName={result.prize_name}
+              couponCode={hasCode(result.prize_type) ? result.coupon_code : null}
+              prizeImageUrl={result.prize_image_url}
+              backgroundColor={result.prize_background_color}
+              revealed={revealed}
+              instruction={
+                result.redeem_online
+                  ? "Use this code at checkout"
+                  : "Use this code on your next purchase"
+              }
+            />
           ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center bg-neutral-700 p-4 text-center text-white">
-              <p className="text-2xl font-bold">Better luck next time!</p>
+            <div className="play-prize-pop flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-neutral-700 to-neutral-800 p-5 text-center text-white">
+              <p className="text-2xl font-extrabold">Better luck next time!</p>
               <p className="mt-2 text-sm text-neutral-300">
                 Thanks for visiting {display.business_name}
               </p>
             </div>
           )}
         </ScratchCard>
+        </GoldenAura>
 
-        {state.step === "revealed" &&
+        {revealed &&
           (result.won ? (
             (() => {
               const copy = claimInstruction(result, display.ends_at);
+              const primary = copy.primary.replace(/^[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\s]+/u, "");
               return (
                 <div className="space-y-3">
-                  <div className="rounded-2xl bg-white p-4 text-center shadow-sm">
-                    <p className="text-sm font-semibold text-neutral-900">
-                      {copy.primary}
-                    </p>
-                    {copy.secondary && (
-                      <p className="mt-1 text-sm text-neutral-600">{copy.secondary}</p>
-                    )}
-                    {hasCode(result.prize_type) && (
-                      <p className="mt-2 text-xs text-neutral-500">
-                        Valid until{" "}
-                        {new Date(result.expires_at).toLocaleDateString("en-IN", {
-                          day: "numeric",
-                          month: "short",
-                        })}
-                      </p>
-                    )}
-                    {result.redeem_online && result.store_url && result.coupon_code && (
-                      <a
-                        href={shopifyDiscountUrl(result.store_url, result.coupon_code)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={() =>
-                          track("shop_now_clicked", {
-                            destination: "shopify_discount",
-                            url: shopifyDiscountUrl(result.store_url!, result.coupon_code!),
-                            coupon_code: result.coupon_code,
-                          })
-                        }
-                        className="mt-3 inline-block rounded-xl bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white active:bg-amber-700"
-                      >
-                        Shop now with code →
-                      </a>
-                    )}
-                  </div>
+                  <ClaimHintCard
+                    primary={primary}
+                    secondary={copy.secondary}
+                    expiresAt={
+                      hasCode(result.prize_type) ? result.expires_at : undefined
+                    }
+                    shopUrl={
+                      result.redeem_online && result.store_url && result.coupon_code
+                        ? shopifyDiscountUrl(result.store_url, result.coupon_code)
+                        : null
+                    }
+                    onShopClick={() =>
+                      track("shop_now_clicked", {
+                        destination: "shopify_discount",
+                        url:
+                          result.store_url && result.coupon_code
+                            ? shopifyDiscountUrl(result.store_url, result.coupon_code)
+                            : undefined,
+                        coupon_code: result.coupon_code,
+                      })
+                    }
+                  />
+                  <TrustBar />
                   {display.redirect?.enabled &&
                     display.redirect.destination_type !== "none" &&
                     display.redirect.url && (
@@ -639,11 +564,10 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
             })()
           ) : (
             <div className="space-y-3">
-              <div className="rounded-2xl bg-white p-4 text-center shadow-sm">
-                <p className="text-sm text-neutral-600">
-                  Follow {display.business_name} for more offers this Onam!
-                </p>
-              </div>
+              <ClaimHintCard
+                primary={`Follow ${display.business_name} for more offers this Onam!`}
+              />
+              <TrustBar />
               {display.redirect?.enabled &&
                 display.redirect.destination_type !== "none" &&
                 display.redirect.url && (
@@ -663,75 +587,124 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-      <div>
-        <label
-          htmlFor="play-name"
-          className="mb-1 block text-sm font-medium text-neutral-800"
+    <>
+    <form
+      onSubmit={handleSubmit}
+      className="play-fade-up space-y-5 rounded-2xl bg-white p-5 shadow-md ring-1 ring-black/5 sm:p-6"
+      noValidate
+    >
+      <div className="flex gap-3">
+        <div
+          aria-hidden
+          className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-orange-50 text-orange-500"
         >
-          Your name
-        </label>
-        <input
-          id="play-name"
-          type="text"
-          autoComplete="name"
-          required
-          maxLength={60}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full rounded-xl border border-neutral-300 bg-white px-4 py-3 text-base outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
-          aria-invalid={!!fieldErrors.name}
-          aria-describedby={fieldErrors.name ? "play-name-error" : undefined}
-        />
-        {fieldErrors.name && (
-          <p id="play-name-error" className="mt-1 text-sm text-red-600">
-            {fieldErrors.name}
-          </p>
-        )}
+          <User className="size-5" strokeWidth={1.75} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <label
+            htmlFor="play-name"
+            className="mb-1.5 block text-sm font-semibold text-neutral-800"
+          >
+            Your name
+          </label>
+          <input
+            id="play-name"
+            type="text"
+            autoComplete="name"
+            required
+            maxLength={60}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Enter your full name"
+            className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-3 text-base text-neutral-900 placeholder:text-neutral-400 outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100"
+            aria-invalid={!!fieldErrors.name}
+            aria-describedby={fieldErrors.name ? "play-name-error" : undefined}
+          />
+          {fieldErrors.name && (
+            <p id="play-name-error" className="mt-1 text-sm text-red-600">
+              {fieldErrors.name}
+            </p>
+          )}
+        </div>
       </div>
 
-      <div>
-        <label
-          htmlFor="play-phone"
-          className="mb-1 block text-sm font-medium text-neutral-800"
+      <div className="flex gap-3">
+        <div
+          aria-hidden
+          className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-[#25D366]"
         >
-          WhatsApp number
-        </label>
-        <input
-          id="play-phone"
-          type="tel"
-          inputMode="numeric"
-          autoComplete="tel"
-          required
-          placeholder="10-digit mobile number"
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          className="w-full rounded-xl border border-neutral-300 bg-white px-4 py-3 text-base outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-200"
-          aria-invalid={!!fieldErrors.phone}
-          aria-describedby={fieldErrors.phone ? "play-phone-error" : undefined}
-        />
-        {fieldErrors.phone && (
-          <p id="play-phone-error" className="mt-1 text-sm text-red-600">
-            {fieldErrors.phone}
-          </p>
-        )}
-        <p className="mt-1 text-xs text-neutral-500">
-          We&apos;ll send you offers on WhatsApp
-        </p>
+          <WhatsAppIcon className="size-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <label
+            htmlFor="play-phone"
+            className="mb-1.5 block text-sm font-semibold text-neutral-800"
+          >
+            WhatsApp number
+          </label>
+          <div className="flex overflow-hidden rounded-xl border border-neutral-200 bg-white focus-within:border-orange-400 focus-within:ring-2 focus-within:ring-orange-100">
+            <div
+              className="flex shrink-0 items-center gap-1.5 border-r border-neutral-200 bg-neutral-50 px-3 text-sm font-medium text-neutral-700"
+              aria-label="Country code India +91"
+            >
+              <span className="text-base leading-none" aria-hidden>
+                🇮🇳
+              </span>
+              <span>+91</span>
+              <svg
+                viewBox="0 0 12 12"
+                className="size-2.5 text-neutral-400"
+                fill="currentColor"
+                aria-hidden
+              >
+                <path d="M2.2 4.2a.75.75 0 0 1 1.06 0L6 6.94l2.74-2.74a.75.75 0 1 1 1.06 1.06l-3.27 3.27a.75.75 0 0 1-1.06 0L2.2 5.26a.75.75 0 0 1 0-1.06z" />
+              </svg>
+            </div>
+            <input
+              id="play-phone"
+              type="tel"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              autoComplete="tel"
+              required
+              maxLength={10}
+              placeholder="Enter 10-digit mobile number"
+              value={phone}
+              onChange={(e) =>
+                setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))
+              }
+              className="min-w-0 flex-1 bg-transparent px-3 py-3 text-base text-neutral-900 placeholder:text-neutral-400 outline-none"
+              aria-invalid={!!fieldErrors.phone}
+              aria-describedby={
+                fieldErrors.phone ? "play-phone-error" : "play-phone-hint"
+              }
+            />
+          </div>
+          {fieldErrors.phone ? (
+            <p id="play-phone-error" className="mt-1.5 text-sm text-red-600">
+              {fieldErrors.phone}
+            </p>
+          ) : (
+            <p
+              id="play-phone-hint"
+              className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-600"
+            >
+              <Check className="size-3.5 shrink-0" strokeWidth={2.5} />
+              We&apos;ll send you offers on WhatsApp
+            </p>
+          )}
+        </div>
       </div>
 
-      <label className="flex items-start gap-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-sm text-neutral-700">
+      <label className="flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50/80 px-2.5 py-2 text-xs text-neutral-600">
         <input
           type="checkbox"
           checked={whatsappConsent}
           onChange={(event) => setWhatsappConsent(event.target.checked)}
           required
-          className="mt-0.5 size-4 rounded border-neutral-300 accent-amber-600"
+          className="size-3.5 shrink-0 rounded border-emerald-300 accent-emerald-600"
         />
-        <span>
-          I agree to receive this reward and future offers from {display.business_name} on WhatsApp.
-          I can reply STOP at any time.
-        </span>
+        <span>I agree to terms and conditions</span>
       </label>
       {fieldErrors.whatsappConsent && (
         <p className="text-sm text-red-600">{fieldErrors.whatsappConsent}</p>
@@ -746,15 +719,12 @@ export function PlayFlow({ merchantSlug, campaignSlug, display, source }: PlayFl
       <button
         type="submit"
         disabled={submitting}
-        className="w-full rounded-xl bg-amber-600 py-3.5 text-base font-semibold text-white active:bg-amber-700 disabled:opacity-60"
+        className="w-full rounded-xl bg-gradient-to-r from-orange-500 to-red-500 py-3.5 text-base font-semibold text-white shadow-sm transition active:brightness-95 disabled:opacity-60"
       >
         {submitting ? "Getting your card…" : "Scratch & Win 🎁"}
       </button>
-
-      <p className="text-center text-xs text-neutral-400">
-        One play per person · By playing you agree to receive offers from{" "}
-        {display.business_name} on WhatsApp
-      </p>
     </form>
+    <TrustBar />
+    </>
   );
 }

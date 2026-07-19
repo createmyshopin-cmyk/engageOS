@@ -1,5 +1,4 @@
 import "server-only";
-import { after } from "next/server";
 import { Controller } from "@/server/core/Controller";
 import { requireScope, requireRole } from "@/server/auth/guard";
 import { tenantRepositoryFor, type RequestContext } from "@/server/http/context";
@@ -114,31 +113,7 @@ export class CustomerController extends Controller {
 
   async upsert(body: UpsertCustomerBody) {
     requireScope(this.principal(), "write");
-    const customer = await this.service.upsert(this.tenant, body);
-    after(async () => {
-      const { syncCustomerToWacrm } = await import("@/lib/wacrm/sync");
-      await syncCustomerToWacrm({
-        businessId: this.businessId,
-        phone: customer.phone,
-        name: customer.name,
-        email: customer.email,
-        customerId: customer.id,
-      });
-
-      const { enqueueCommunicationJob } = await import("@/lib/communication/outbox");
-      const { CommunicationEvents } = await import("@/lib/communication/events");
-      await enqueueCommunicationJob({
-        businessId: this.businessId,
-        eventType: CommunicationEvents.CUSTOMER_CREATED,
-        dedupKey: `customer.created:${customer.id}`,
-        payload: {
-          customerId: customer.id,
-          phone: customer.phone,
-          customerName: customer.name ?? undefined,
-        },
-      });
-    });
-    return customer;
+    return this.service.upsert(this.tenant, body);
   }
 
   async setConsent(id: string, body: SetConsentBody) {

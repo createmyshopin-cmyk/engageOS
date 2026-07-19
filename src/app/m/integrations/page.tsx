@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getTenantRepository } from "@/lib/db/tenant-repository";
-import { getWacrmIntegration } from "@/lib/wacrm/store";
 import { getWatiIntegration } from "@/lib/wati/store";
 import { listBusinessTracking } from "@/lib/tracking/store";
 import { getShop } from "@/lib/shopify/store";
@@ -28,19 +27,6 @@ export default async function IntegrationsPage() {
 
   const biz = await repo.getBusiness<{ name: string; city: string | null }>("name, city");
   if (!biz) redirect("/m/login?from=/m/integrations");
-
-  // WACRM status
-  let wacrmConnected = false;
-  let wacrmAccountName: string | null = null;
-  try {
-    const wacrm = await getWacrmIntegration(repo.businessId);
-    if (wacrm && wacrm.status !== "disconnected") {
-      wacrmConnected = true;
-      wacrmAccountName = wacrm.account_name ?? "WhatsApp CRM";
-    }
-  } catch (err) {
-    console.error("Failed to load WACRM status:", err);
-  }
 
   // WATI status
   let watiConnected = false;
@@ -106,6 +92,46 @@ export default async function IntegrationsPage() {
     console.error("Failed to load Zapier status:", err);
   }
 
+  const communicationItems: IntegrationCardData[] = [
+    {
+      id: "wati",
+      name: "WATI WhatsApp",
+      description:
+        "Connect your official WATI WhatsApp business gateway (API v3) for automated scratch card and coupon distributions.",
+      logoSrc: INTEGRATION_LOGOS.wati,
+      logoClassName: "h-6 w-auto max-w-[4.5rem] object-contain",
+      category: "communication",
+      status: watiConnected ? "connected" : "disconnected",
+      href: "/m/integrations/wati",
+      badgeLabel: watiConnected ? "Connected" : "Available",
+      accountName: watiAccountName,
+    },
+    {
+      id: "twilio",
+      name: "Twilio SMS",
+      description:
+        "Fallback to traditional SMS notifications for customers without WhatsApp when they win prizes.",
+      logoSrc: INTEGRATION_LOGOS.twilio,
+      category: "communication",
+      status: "coming_soon",
+      href: "#",
+      badgeLabel: "Coming Soon",
+      accountName: null,
+    },
+    {
+      id: "mailchimp",
+      name: "Mailchimp",
+      description:
+        "Sync your scratch card participants and coupon winners instantly with your Mailchimp subscriber lists.",
+      logoSrc: INTEGRATION_LOGOS.mailchimp,
+      category: "communication",
+      status: "coming_soon",
+      href: "#",
+      badgeLabel: "Coming Soon",
+      accountName: null,
+    },
+  ];
+
   const sections: IntegrationSectionData[] = [
     {
       id: "marketing",
@@ -134,58 +160,7 @@ export default async function IntegrationsPage() {
       id: "communication",
       title: "Communication",
       subtitle: "Reach customers over WhatsApp, SMS and email.",
-      items: [
-        {
-          id: "wacrm",
-          name: "WhatsApp CRM (WACRM)",
-          description:
-            "Connect WACRM as your WhatsApp communication engine — inbox, broadcasts, automations, and AI powered by Meta Cloud API.",
-          logoSrc: INTEGRATION_LOGOS.wacrm,
-          logoClassName: "h-8 w-8 object-contain",
-          category: "communication",
-          status: wacrmConnected ? "connected" : "disconnected",
-          href: "/m/integrations/wacrm",
-          badgeLabel: wacrmConnected ? "Connected" : "Available",
-          accountName: wacrmAccountName,
-        },
-        {
-          id: "wati",
-          name: "WATI WhatsApp",
-          description:
-            "Connect your official WATI WhatsApp business gateway (API v3) for automated scratch card and coupon distributions.",
-          logoSrc: INTEGRATION_LOGOS.wati,
-          logoClassName: "h-6 w-auto max-w-[4.5rem] object-contain",
-          category: "communication",
-          status: watiConnected ? "connected" : "disconnected",
-          href: "/m/integrations/wati",
-          badgeLabel: watiConnected ? "Connected" : "Available",
-          accountName: watiAccountName,
-        },
-        {
-          id: "twilio",
-          name: "Twilio SMS",
-          description:
-            "Fallback to traditional SMS notifications for customers without WhatsApp when they win prizes.",
-          logoSrc: INTEGRATION_LOGOS.twilio,
-          category: "communication",
-          status: "coming_soon",
-          href: "#",
-          badgeLabel: "Coming Soon",
-          accountName: null,
-        },
-        {
-          id: "mailchimp",
-          name: "Mailchimp",
-          description:
-            "Sync your scratch card participants and coupon winners instantly with your Mailchimp subscriber lists.",
-          logoSrc: INTEGRATION_LOGOS.mailchimp,
-          category: "communication",
-          status: "coming_soon",
-          href: "#",
-          badgeLabel: "Coming Soon",
-          accountName: null,
-        },
-      ],
+      items: communicationItems,
     },
     {
       id: "reporting",
